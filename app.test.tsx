@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { Overview, Viewer } from "./app.tsx";
+import { OfficeViewerSettings, Viewer } from "./app.tsx";
 import { rpc, composer, slots } from "./test-runtime.js";
 const props = {
   pluginId: "office-viewer",
@@ -23,8 +23,32 @@ it("registers the Office opener without replacing PDF/media ownership", () => {
     "xlsx",
     "pptx",
   ]);
-  render(<Overview />);
+  expect(slots.settingsSection).toHaveBeenCalledWith({
+    id: "preview",
+    component: OfficeViewerSettings,
+  });
+  expect(slots.navPanel).not.toHaveBeenCalled();
+});
+it("uses native Settings groups for supported formats and fixed preview behavior", () => {
+  render(<OfficeViewerSettings />);
+  expect(screen.getByRole("region", { name: "Supported documents" }).className).toBe("settings-section");
+  expect(screen.getAllByRole("term").map((term) => term.textContent)).toHaveLength(5);
+  expect(screen.getAllByRole("definition").map((value) => value.textContent)).toEqual([
+    ".docx", ".xlsx", ".pptx", "Read-only", "8 MiB",
+  ]);
+  expect(screen.queryByRole("textbox")).toBeNull();
+  expect(screen.queryByRole("checkbox")).toBeNull();
+  expect(screen.getByText(/No additional configuration is required/)).toBeTruthy();
+});
+it("provides a disclosure explaining how to open documents and quote sections", () => {
+  render(<OfficeViewerSettings />);
+  const guide = screen.getByText("How to preview and quote a document");
+  expect(guide.tagName).toBe("SUMMARY");
+  expect(guide.parentElement?.tagName).toBe("DETAILS");
+  fireEvent.click(guide);
+  expect(guide.parentElement?.hasAttribute("open")).toBe(true);
   expect(screen.getByText(/Open a .docx/)).toBeTruthy();
+  expect(screen.queryByRole("heading", { name: "Office Viewer" })).toBeNull();
 });
 it("renders sheets safely, switches sections and quotes to the current draft", async () => {
   rpc.call.mockResolvedValue({

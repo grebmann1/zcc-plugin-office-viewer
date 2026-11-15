@@ -118,23 +118,55 @@ export function Viewer({ path, source }: PluginFileOpenerProps) {
     </Frame>
   );
 }
-export function Overview() {
+function SettingInfo({ label, description, value }: {
+  label: string;
+  description: string;
+  value: string;
+}) {
+  return (
+    <div className="settings-field" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 24 }}>
+      <dt className="settings-toggle-copy">
+        <span className="settings-label">{label}</span>
+        <p className="settings-help">{description}</p>
+      </dt>
+      <dd style={{ margin: 0, flexShrink: 0, color: "var(--text-muted)", fontSize: 12 }}>{value}</dd>
+    </div>
+  );
+}
+export function OfficeViewerSettings() {
   usePage("Office Viewer");
   return (
-    <Frame title="Office Viewer">
-      <p>
-        Open a .docx, .xlsx or .pptx file from a project or thread attachment to
-        read it beside the conversation.
-      </p>
-      <p>
-        Choose a sheet or slide and use “Quote section” to add its text to your
-        draft.
-      </p>
-      <p>
-        Read-only content previews support files up to 8 MiB.
-        Password-protected, macro and legacy binary formats are unsupported.
-      </p>
-    </Frame>
+    <div aria-label="Office Viewer preferences">
+      <section className="settings-section" aria-labelledby="office-viewer-documents">
+        <h3 id="office-viewer-documents">Supported documents</h3>
+        <dl className="settings-section-body" style={{ margin: 0 }}>
+          <SettingInfo label="Word documents" description="Preview document paragraphs." value=".docx" />
+          <SettingInfo label="Excel workbooks" description="Preview sheets with stored cell values or formula text." value=".xlsx" />
+          <SettingInfo label="PowerPoint presentations" description="Preview slide text." value=".pptx" />
+        </dl>
+      </section>
+      <section className="settings-section" aria-labelledby="office-viewer-behavior">
+        <h3 id="office-viewer-behavior">Preview behavior</h3>
+        <dl className="settings-section-body" style={{ margin: 0 }}>
+          <SettingInfo label="Preview mode" description="Text and cell values. Images, layout, charts and formula calculation are unavailable." value="Read-only" />
+          <SettingInfo label="File size limit" description="Password-protected, macro and legacy binary formats are unsupported." value="8 MiB" />
+        </dl>
+      </section>
+      <section className="settings-section" aria-labelledby="office-viewer-usage">
+        <h3 id="office-viewer-usage">Using Office Viewer</h3>
+        <div className="settings-section-body">
+          <details>
+            <summary style={{ cursor: "pointer" }}>How to preview and quote a document</summary>
+            <p className="settings-help">
+              Open a .docx, .xlsx or .pptx file from a project or thread attachment.
+              Choose a sheet or slide, then select “Quote section” to add its text
+              to the conversation draft.
+            </p>
+          </details>
+        </div>
+        <p className="settings-help">Supported files open automatically. No additional configuration is required.</p>
+      </section>
+    </div>
   );
 }
 export default definePluginApp((app) => {
@@ -144,11 +176,8 @@ export default definePluginApp((app) => {
     extensions: ["docx", "xlsx", "pptx"],
     component: Viewer,
   });
-  app.slots.navPanel({
-    id: "main",
-    title: "Office Viewer",
-    icon: "FileText",
-    placement: "extensions",
-    component: Overview,
+  app.slots.settingsSection({
+    id: "preview",
+    component: OfficeViewerSettings,
   });
 });

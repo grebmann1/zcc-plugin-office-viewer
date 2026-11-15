@@ -6,6 +6,7 @@ export const slots = {
   navPanel: vi.fn(),
   threadPanelAction: vi.fn(),
   fileOpener: vi.fn(),
+  settingsSection: vi.fn(),
 };
 export const useRpc = () => rpc;
 export const useComposer = () => composer;

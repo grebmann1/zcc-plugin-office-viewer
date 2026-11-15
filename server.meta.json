@@ -3,7 +3,7 @@
   "sdkVersion": "0.1.0",
   "artifactFormatVersion": 1,
   "pluginId": "office-viewer",
-  "pluginVersion": "0.1.0",
+  "pluginVersion": "0.1.1",
   "builtWith": {
     "zccVersion": "2.6.1",
     "pluginSdkVersion": "0.1.0"

@@ -185,12 +185,41 @@ function Viewer({ path, source }) {
     ] })
   ] });
 }
-function Overview() {
+function SettingInfo({ label, description, value }) {
+  return /* @__PURE__ */ jsxs("div", { className: "settings-field", style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 24 }, children: [
+    /* @__PURE__ */ jsxs("dt", { className: "settings-toggle-copy", children: [
+      /* @__PURE__ */ jsx("span", { className: "settings-label", children: label }),
+      /* @__PURE__ */ jsx("p", { className: "settings-help", children: description })
+    ] }),
+    /* @__PURE__ */ jsx("dd", { style: { margin: 0, flexShrink: 0, color: "var(--text-muted)", fontSize: 12 }, children: value })
+  ] });
+}
+function OfficeViewerSettings() {
   usePage("Office Viewer");
-  return /* @__PURE__ */ jsxs(Frame, { title: "Office Viewer", children: [
-    /* @__PURE__ */ jsx("p", { children: "Open a .docx, .xlsx or .pptx file from a project or thread attachment to read it beside the conversation." }),
-    /* @__PURE__ */ jsx("p", { children: "Choose a sheet or slide and use \u201CQuote section\u201D to add its text to your draft." }),
-    /* @__PURE__ */ jsx("p", { children: "Read-only content previews support files up to 8 MiB. Password-protected, macro and legacy binary formats are unsupported." })
+  return /* @__PURE__ */ jsxs("div", { "aria-label": "Office Viewer preferences", children: [
+    /* @__PURE__ */ jsxs("section", { className: "settings-section", "aria-labelledby": "office-viewer-documents", children: [
+      /* @__PURE__ */ jsx("h3", { id: "office-viewer-documents", children: "Supported documents" }),
+      /* @__PURE__ */ jsxs("dl", { className: "settings-section-body", style: { margin: 0 }, children: [
+        /* @__PURE__ */ jsx(SettingInfo, { label: "Word documents", description: "Preview document paragraphs.", value: ".docx" }),
+        /* @__PURE__ */ jsx(SettingInfo, { label: "Excel workbooks", description: "Preview sheets with stored cell values or formula text.", value: ".xlsx" }),
+        /* @__PURE__ */ jsx(SettingInfo, { label: "PowerPoint presentations", description: "Preview slide text.", value: ".pptx" })
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxs("section", { className: "settings-section", "aria-labelledby": "office-viewer-behavior", children: [
+      /* @__PURE__ */ jsx("h3", { id: "office-viewer-behavior", children: "Preview behavior" }),
+      /* @__PURE__ */ jsxs("dl", { className: "settings-section-body", style: { margin: 0 }, children: [
+        /* @__PURE__ */ jsx(SettingInfo, { label: "Preview mode", description: "Text and cell values. Images, layout, charts and formula calculation are unavailable.", value: "Read-only" }),
+        /* @__PURE__ */ jsx(SettingInfo, { label: "File size limit", description: "Password-protected, macro and legacy binary formats are unsupported.", value: "8 MiB" })
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxs("section", { className: "settings-section", "aria-labelledby": "office-viewer-usage", children: [
+      /* @__PURE__ */ jsx("h3", { id: "office-viewer-usage", children: "Using Office Viewer" }),
+      /* @__PURE__ */ jsx("div", { className: "settings-section-body", children: /* @__PURE__ */ jsxs("details", { children: [
+        /* @__PURE__ */ jsx("summary", { style: { cursor: "pointer" }, children: "How to preview and quote a document" }),
+        /* @__PURE__ */ jsx("p", { className: "settings-help", children: "Open a .docx, .xlsx or .pptx file from a project or thread attachment. Choose a sheet or slide, then select \u201CQuote section\u201D to add its text to the conversation draft." })
+      ] }) }),
+      /* @__PURE__ */ jsx("p", { className: "settings-help", children: "Supported files open automatically. No additional configuration is required." })
+    ] })
   ] });
 }
 var app_default = definePluginApp((app) => {
@@ -200,16 +229,13 @@ var app_default = definePluginApp((app) => {
     extensions: ["docx", "xlsx", "pptx"],
     component: Viewer
   });
-  app.slots.navPanel({
-    id: "main",
-    title: "Office Viewer",
-    icon: "FileText",
-    placement: "extensions",
-    component: Overview
+  app.slots.settingsSection({
+    id: "preview",
+    component: OfficeViewerSettings
   });
 });
 export {
-  Overview,
+  OfficeViewerSettings,
   Viewer,
   app_default as default
 };
