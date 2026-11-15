@@ -1,0 +1,2688 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { DragEvent, KeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
+import { useComposer, useRpc } from "@get-bb/plugin-sdk/app";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import type { rpcContract } from "../../../server";
+import { studioLocale, useT } from "../../shared/i18n";
+import { patchThreadSession, readThreadSession } from "../session";
+import { getStudioSettings, patchStudioSettings, useStudioSettings } from "../settings-store";
+import { useChatAutosave } from "../use-chat-autosave";
+import {
+  CATALOG_BY_TYPE,
+  SNAP,
+  snap,
+  canvasPresetDimensions,
+  cloneWireframe,
+  defaultElement,
+  newElementId,
+  newWireframe,
+  nextLabel,
+  parseWireframe,
+  tryParseWireframe,
+  type PaletteGroup,
+  type PropValue,
+  type Wireframe,
+  type WireframeElement,
+  getActivePage,
+  updateActivePage,
+  setActivePageId,
+  newPage,
+  nextPageName,
+} from "./model";
+import { PrototypeShell, PrototypeStyleBar } from "./shell";
+import { PrototypeToolbar, type ToolbarMenu } from "./toolbar";
+import { PrototypeLeftPane, type LeftTopTab, type PaletteLibraryView } from "./left-pane";
+import { PrototypeCanvas } from "./canvas";
+import { PrototypeInspector, type InspectorTab } from "./inspector";
+import { assignRadioGroup, createRadioGroup, setRadioChecked } from "./inspector-model";
+import { blobToBase64, loadScreenshotLibrary, noteNumbers, placeOnCanvas, resized, selectionBounds, type Handle } from "./builder-geometry";
+import { PALETTE_BY_ID, PALETTE_TILES, elementFromTile, tileMatchesQuery, type PaletteTile } from "./palette";
+import {
+  addChoiceSibling,
+  applyInlineDraft,
+  checkRadio,
+  draftUnchanged,
+  enterOnListItem,
+  itemIndexAt,
+  itemListKey,
+  readDraft,
+  removeEmptyListItem,
+  simpleEditKey,
+  stringList,
+  toggleCheckbox,
+  type InlineEdit,
+} from "./editing";
+import { alignElements, distributeElements, type AlignEdge, type DistributeAxis } from "./align";
+import { ICON_DRAG_PREFIX, iconDisplayLabel } from "./icons";
+import { TEMPLATE_DRAG_PREFIX, insertTemplateElements } from "./templates";
+import {
+  activeModifierLabels,
+  arrowNudge,
+  CANVAS_TOOL_KEYS,
+  CLICK_DRAG_THRESHOLD,
+  clickSelection,
+  constrainMove,
+  distanceLinesFor,
+  drawRect,
+  elementAtPoint,
+  expandToGroups,
+  isConnectorTool,
+  shapeAtPoint,
+  groupIds,
+  isDragDrawTool,
+  marqueeHitTest,
+  moveElementsByDelta,
+  normalizeRect,
+  nudgeStep,
+  resizeByArrow,
+  selectionRect,
+  snapDelta,
+  snapRectToPeers,
+  type CanvasModifiers,
+  type CanvasRect,
+  type DistanceLine,
+  type ElementBox,
+  type QuickTool,
+  type SnapGuide,
+  ungroupIds,
+  zoomIn,
+  zoomOut,
+  zoomToBounds,
+  zoomToFit,
+} from "./canvas-math";
+import { ProtoShortcutsSheet } from "./proto-shortcuts-sheet";
+import { PrototypePreviewPlayer } from "./preview-player";
+import { WireframeHistoryDialog } from "./wireframe-history-dialog";
+import { AgentGenerateDialog } from "./agent-generate-dialog";
+import { addComment, commentNumbersOnPage, commentsForPage, deleteComment, updateComment } from "./comments";
+import { CommentComposeDialog } from "./comment-compose-dialog";
+import { buildWireframeCodeExport } from "./code-export";
+import { buildImplementFromSpecPrompt, buildWireframeSpecMarkdown, specImageRelPath } from "./spec-export";
+import {
+  applyConstraintsToChildren,
+  isAutoLayoutStack,
+  mergePageElementsForView,
+  readStackLayout,
+  relayoutPageStacks,
+  resolvePageView,
+  reorderStackChild,
+  type PageDeviceView,
+  wrapSelectionInStack,
+  writeStackLayout,
+} from "./layout";
+import { childrenOf, readParent } from "./containers";
+import { PrototypeCommandPalette } from "./command-palette";
+import { PrototypeStylesPane } from "./styles-pane";
+import { PrototypeTour } from "./prototype-tour";
+import { UndoStepsPanel } from "./undo-steps-panel";
+import { PrototypePublishDialog } from "./publish-dialog";
+import {
+  PLUGIN_HTTP_PREFIX,
+  buildPageSvg,
+  buildPdfFromJpegPages,
+  collectPdfNotes,
+  importFileText,
+  mergeImportOntoPage,
+  pdfExportFileName,
+  pngBlobToJpegBytes,
+  pngExportFileName,
+  svgExportFileName,
+  triggerDownload,
+  type PngExportScale,
+} from "./publish";
+import {
+  applyColorTokenLink,
+  applyTextStyleLink,
+  getStyleLibrary,
+  unlinkElementStyles,
+  type CommandPaletteItem,
+} from "./styles";
+import {
+  replaceWireframeFromRemote,
+  shouldApplyRemoteWireframe,
+  wireframeContentSha256,
+} from "./agent-sync";
+import { ElementSpatialIndex, SNAP_SPATIAL_MIN_PEERS } from "./spatial-index";
+import { PrototypeContextMenu } from "./prototype-context-menu";
+import {
+  applyZOrder,
+  nudgeZOrder,
+  zOrderOpFromAction,
+  type MenuActionId,
+  type MenuBuildContext,
+  type MenuTarget,
+} from "./menus";
+import {
+  anchorAtPoint,
+  anchorPoint,
+  connectorPropsToRecord,
+  createConnectorElement,
+  detachConnectorsOnDelete,
+  isConnector,
+  readConnectorProps,
+  refreshConnector,
+  refreshConnectorsForElements,
+  type ConnectorAnchor,
+  type ConnectorProps,
+} from "./connectors";
+import {
+  absolutePosition,
+  addPanelState,
+  attachToScope,
+  boardElements,
+  deletePanelState,
+  duplicatePanelState,
+  enterScopeForElement,
+  orphanChildren,
+  renamePanelState,
+  setPanelViewAllStates,
+  type EditScope,
+} from "./containers";
+import { ContainerScopeBar, PanelScopeBar } from "./panel-scope-bar";
+import {
+  applyComponentFromSelection,
+  boardElementsForComponent,
+  clearOverride,
+  collectSelectionForComponent,
+  COMPONENT_DRAG_PREFIX,
+  countInstances,
+  createInstanceFromComponent,
+  detachInstance as detachInstanceElements,
+  filterComponents,
+  findComponent,
+  instanceComponentId,
+  purgeComponent,
+  resetOverrides,
+  setOverride,
+  syncInstanceDimensions,
+  updateComponentElements,
+} from "./components";
+
+const MAX_HISTORY = 60;
+const HISTORY_SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
+
+type Drag =
+  | {
+      kind: "move";
+      ids: string[];
+      ox: number;
+      oy: number;
+      orig: Record<string, { x: number; y: number }>;
+      snapIndex?: ElementSpatialIndex | null;
+    }
+  | { kind: "resize"; id: string; handle: Handle; orig: WireframeElement }
+  | {
+      kind: "draw";
+      tool: QuickTool;
+      ax: number;
+      ay: number;
+      panX: number;
+      panY: number;
+      ex: number;
+      ey: number;
+      lastX: number;
+      lastY: number;
+    }
+  | { kind: "marquee"; ox: number; oy: number; contain: boolean }
+  | { kind: "pan"; startX: number; startY: number; scrollLeft: number; scrollTop: number }
+  | {
+      kind: "connectorDraw";
+      fromElementId?: string;
+      fromAnchor?: ConnectorAnchor;
+      fromX: number;
+      fromY: number;
+    }
+  | { kind: "connectorHandle"; id: string; which: "start" | "end" | "bend" }
+  | {
+      kind: "stackLayout";
+      stackId: string;
+      mode: "gap" | "padding";
+      arg: string;
+      ox: number;
+      oy: number;
+      start: ReturnType<typeof readStackLayout>;
+    };
+type SendKind = "both" | "png" | "json";
+
+function blankWireframe() {
+  const settings = getStudioSettings();
+  return newWireframe(undefined, { ...canvasPresetDimensions(settings.protoPreset), background: "#ffffff" });
+}
+
+function pageElements(doc: Wireframe, deviceView: import("./layout").PageDeviceView) {
+  return resolvePageView(getActivePage(doc), deviceView).elements;
+}
+function pageCanvas(doc: Wireframe, deviceView: import("./layout").PageDeviceView) {
+  return resolvePageView(getActivePage(doc), deviceView).canvas;
+}
+function patchElements(doc: Wireframe, elements: WireframeElement[], deviceView: import("./layout").PageDeviceView) {
+  return updateActivePage(doc, (p) => mergePageElementsForView(p, deviceView, elements));
+}
+function patchCanvas(doc: Wireframe, patch: Partial<Wireframe["pages"][0]["canvas"]>) { return updateActivePage(doc, (p) => ({ ...p, canvas: { ...p.canvas, ...patch } })); }
+
+export function PrototypeBuilder({ threadId }: { threadId: string }) {
+  const t = useT();
+  const settings = useStudioSettings();
+  const rpc = useRpc<typeof rpcContract>();
+  const composer = useComposer();
+  const locale = studioLocale();
+  const restored = readThreadSession(threadId).prototype;
+  const rootRef = useRef<HTMLDivElement>(null);
+  const barRef = useRef<HTMLDivElement>(null);
+  const canvasPaneRef = useRef<HTMLDivElement>(null);
+  const boardRef = useRef<HTMLDivElement>(null);
+  const drag = useRef<Drag | null>(null);
+  const spaceHeld = useRef(false);
+  const clipboard = useRef<WireframeElement[]>([]);
+  const [{ history, index, labels }, setTimeline] = useState(() => ({
+    history: [restored?.doc ?? blankWireframe()],
+    labels: ["Initial"],
+    index: 0,
+  }));
+  const doc = history[index]!;
+  const [live, setLive] = useState<Wireframe | null>(null);
+  const view = live ?? doc;
+  const [selected, setSelected] = useState<string[]>(() => restored?.selected ?? []);
+  const badges = settings.protoBadges;
+  const snapGrid = settings.protoSnap;
+  const [zoom, setZoom] = useState(() => restored?.zoom ?? 1);
+  const [marquee, setMarquee] = useState<CanvasRect | null>(null);
+  const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([]);
+  const [distanceLines, setDistanceLines] = useState<DistanceLine[]>([]);
+  const [moveTooltip, setMoveTooltip] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const [panning, setPanning] = useState(false);
+  const [pendingTool, setPendingTool] = useState<QuickTool | null>(null);
+  const [drawPreview, setDrawPreview] = useState<ElementBox | null>(null);
+  const [connectorHoverId, setConnectorHoverId] = useState<string | null>(null);
+  const [connectorDraft, setConnectorDraft] = useState<{ from: { x: number; y: number }; to: { x: number; y: number } } | null>(null);
+  const [editScope, setEditScope] = useState<EditScope>({ kind: "page" });
+  const [modifiers, setModifiers] = useState<CanvasModifiers>({ shift: false, alt: false, meta: false, space: false });
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [quickInsertOpen, setQuickInsertOpen] = useState(false);
+  const [quickQuery, setQuickQuery] = useState("");
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; target: MenuTarget } | null>(null);
+  const [deleteComponentId, setDeleteComponentId] = useState<string | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const previewBoardRef = useRef<HTMLDivElement>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [undoStepsOpen, setUndoStepsOpen] = useState(false);
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [publishPublished, setPublishPublished] = useState(false);
+  const [previewPath, setPreviewPath] = useState<string | null>(null);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [tourOpen, setTourOpen] = useState(false);
+  const [minimapViewport, setMinimapViewport] = useState({ left: 0, top: 0, width: 1280, height: 800 });
+  const [generateOpen, setGenerateOpen] = useState(false);
+  const [commentToolActive, setCommentToolActive] = useState(false);
+  const [commentComposeOpen, setCommentComposeOpen] = useState(false);
+  const [commentDraft, setCommentDraft] = useState<{ x: number; y: number; elementId?: string } | null>(null);
+  const [pageDeviceView, setPageDeviceView] = useState<PageDeviceView>("desktop");
+  const [assetUrls, setAssetUrls] = useState<Record<string, string>>({});
+  const lastHistorySnapshotAt = useRef(0);
+  const lastWrittenHashRef = useRef<string | null>(null);
+  const lastAppliedRemoteHashRef = useRef<string | null>(null);
+  const syncBusyRef = useRef(false);
+  const docRef = useRef(doc);
+  docRef.current = doc;
+  const [renameElementId, setRenameElementId] = useState<string | null>(null);
+  const [renamePageId, setRenamePageId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  
+  const [leftTab, setLeftTab] = useState<LeftTopTab>("pages");
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>("style");
+  const [leftOpen, setLeftOpen] = useState(true);
+  const [rightOpen, setRightOpen] = useState(true);
+  const [leftOverlay, setLeftOverlay] = useState(false);
+  const [rightOverlay, setRightOverlay] = useState(false);
+  const [openTabIds, setOpenTabIds] = useState<string[]>(() => (restored?.openTabIds.length ? restored.openTabIds : [getActivePage(doc).id]));
+  const shellRef = useRef<HTMLDivElement>(null);
+  const [compact, setCompact] = useState(false);
+const [paletteView, setPaletteView] = useState<PaletteLibraryView>("elements");
+  const [collapsed, setCollapsed] = useState<Partial<Record<PaletteGroup, boolean>>>({ flow: true });
+  const [busy, setBusy] = useState(false);
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [openOpen, setOpenOpen] = useState(false);
+  const [menu, setMenu] = useState<ToolbarMenu | null>(null);
+  const [savedNames, setSavedNames] = useState<string[]>([]);
+  const [openedStem, setOpenedStem] = useState<string | null>(() => restored?.openedStem ?? null);
+  const autosaveRef = useRef<() => Promise<void>>(async () => {});
+  const autosaveStatus = useChatAutosave(JSON.stringify(doc), () => autosaveRef.current());
+  const [saveName, setSaveName] = useState(() => t("protoUntitled"));
+  const [nameDraft, setNameDraft] = useState(doc.name);
+  const [edit, setEdit] = useState<InlineEdit | null>(null);
+  const editRef = useRef<InlineEdit | null>(null);
+  const editInputRef = useRef<HTMLInputElement>(null);
+  const skipBlur = useRef(false);
+  editRef.current = edit;
+  const editFocusKey = edit
+    ? edit.target.kind === "item"
+      ? `${edit.id}:${edit.target.key}:${edit.target.index}`
+      : `${edit.id}:${edit.target.key}`
+    : "";
+
+  useEffect(() => {
+    if (!editFocusKey) return;
+    editInputRef.current?.focus();
+    editInputRef.current?.select();
+  }, [editFocusKey]);
+
+  useEffect(() => {
+    setNameDraft(doc.name);
+  }, [doc.name]);
+
+  useEffect(() => {
+    patchThreadSession(threadId, { tool: "prototype", prototype: { doc, openedStem, zoom, selected, openTabIds } });
+  }, [threadId, doc, openedStem, zoom, selected, openTabIds]);
+
+  useEffect(() => {
+    const el = shellRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      setCompact((entries[0]?.contentRect.width ?? el.clientWidth) < 900);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!menu) return;
+    const onPointer = (event: PointerEvent) => {
+      if ((event.target as HTMLElement).closest("[data-toolbar-menu]")) return;
+      setMenu(null);
+    };
+    document.addEventListener("pointerdown", onPointer);
+    return () => document.removeEventListener("pointerdown", onPointer);
+  }, [menu]);
+
+  const commit = useCallback((next: Wireframe, label = "Edit") => {
+    setLive(null);
+    setTimeline((s) => {
+      const keptHist = s.history.slice(Math.max(0, s.index + 1 - MAX_HISTORY), s.index + 1);
+      const keptLabels = s.labels.slice(Math.max(0, s.index + 1 - MAX_HISTORY), s.index + 1);
+      return { history: [...keptHist, cloneWireframe(next)], labels: [...keptLabels, label], index: keptHist.length };
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!settings.protoTourDone) setTourOpen(true);
+  }, [settings.protoTourDone]);
+
+  useEffect(() => {
+    const pane = canvasPaneRef.current;
+    if (!pane) return;
+    const sync = () => {
+      const canvas = pageCanvas(docRef.current, pageDeviceView);
+      setMinimapViewport({
+        left: pane.scrollLeft / zoom,
+        top: pane.scrollTop / zoom,
+        width: pane.clientWidth / zoom,
+        height: pane.clientHeight / zoom,
+      });
+    };
+    sync();
+    pane.addEventListener("scroll", sync);
+    return () => pane.removeEventListener("scroll", sync);
+  }, [zoom, pageDeviceView, doc.activePageId]);
+
+  const markWrittenJson = useCallback(async (json: string) => {
+    lastWrittenHashRef.current = await wireframeContentSha256(json);
+  }, []);
+
+  const resolveAsset = useCallback(
+    (src: string) => {
+      if (src.startsWith("data:")) return src;
+      const cached = assetUrls[src];
+      if (cached) return cached;
+      void rpc
+        .call("readPrototypeAsset", { threadId, relPath: src, locale })
+        .then(({ base64, contentType }) => {
+          const url = `data:${contentType};base64,${base64}`;
+          setAssetUrls((prev) => (prev[src] ? prev : { ...prev, [src]: url }));
+        })
+        .catch(() => {});
+      return undefined;
+    },
+    [assetUrls, locale, rpc, threadId],
+  );
+
+  const undo = () => setTimeline((s) => ({ ...s, index: Math.max(0, s.index - 1) }));
+  const redo = () => setTimeline((s) => ({ ...s, index: Math.min(s.history.length - 1, s.index + 1) }));
+
+  useEffect(() => {
+    if (!openedStem) return;
+    const tick = async () => {
+      if (document.hidden || syncBusyRef.current) return;
+      syncBusyRef.current = true;
+      try {
+        const { sha256 } = await rpc.call("statWireframe", { threadId, name: openedStem, locale });
+        if (!shouldApplyRemoteWireframe(sha256, lastWrittenHashRef.current, lastAppliedRemoteHashRef.current)) return;
+        const loaded = await rpc.call("loadWireframe", { threadId, name: openedStem, locale });
+        const parsed = tryParseWireframe(loaded.json);
+        if (!parsed.ok) {
+          lastAppliedRemoteHashRef.current = sha256;
+          toast.error(t("protoAgentSyncInvalid", { message: parsed.message }));
+          return;
+        }
+        commit(replaceWireframeFromRemote(docRef.current, parsed.doc));
+        lastAppliedRemoteHashRef.current = sha256;
+        toast.message(t("protoAgentSyncApplied"), {
+          action: { label: t("undo"), onClick: () => undo() },
+        });
+      } catch {
+        /* polling is best-effort */
+      } finally {
+        syncBusyRef.current = false;
+      }
+    };
+    const id = window.setInterval(() => void tick(), 2000);
+    return () => clearInterval(id);
+  }, [commit, locale, openedStem, rpc, t]);
+
+  const withBoardElements = (elements: WireframeElement[]) => {
+    const laid = editScope.kind === "page" ? relayoutPageStacks(elements) : elements;
+    if (editScope.kind === "component") {
+      return syncInstanceDimensions(updateComponentElements(doc, editScope.componentId, laid));
+    }
+    return patchElements(doc, laid, pageDeviceView);
+  };
+
+  const replace = (elements: WireframeElement[]) => commit(withBoardElements(elements));
+
+  const boardElementsFor = (source: Wireframe) => {
+    if (editScope.kind === "component") {
+      return findComponent(source, editScope.componentId)?.elements ?? [];
+    }
+    return pageElements(source, pageDeviceView);
+  };
+
+  const addTile = (tile: PaletteTile, x?: number, y?: number) => {
+    if (tile.type === "Connector") {
+      setPendingTool({ type: "Connector" });
+      return;
+    }
+    const spec = CATALOG_BY_TYPE[tile.type];
+    const el = placeOnCanvas(
+      elementFromTile(tile, x ?? (pageCanvas(doc, pageDeviceView).width - spec.w) / 2, y ?? (pageCanvas(doc, pageDeviceView).height - spec.h) / 2, pageElements(doc, pageDeviceView)),
+      pageCanvas(doc, pageDeviceView),
+    );
+    replace([...pageElements(doc, pageDeviceView), el]);
+    setSelected([el.id]);
+  };
+
+  const insertOnBoard = (draft: WireframeElement, absX: number, absY: number) => {
+    const scoped = editScope.kind === "page" ? draft : attachToScope(draft, editScope, absX, absY, boardElementsFor(doc));
+    const el = placeOnCanvas(scoped, pageCanvas(doc, pageDeviceView));
+    replace([...boardElementsFor(doc), el]);
+    setSelected([el.id]);
+  };
+
+  const addQuickTool = (tool: QuickTool, x: number, y: number) => {
+    const base = defaultElement(tool.type, x, y, pageElements(doc, pageDeviceView));
+    insertOnBoard({ ...base, props: { ...base.props, ...(tool.props ?? {}) } }, x, y);
+  };
+
+  const placeDrawnElement = (tool: QuickTool, box: ElementBox) => {
+    const base = defaultElement(tool.type, box.x, box.y, pageElements(doc, pageDeviceView));
+    insertOnBoard({ ...base, props: { ...base.props, ...(tool.props ?? {}) }, w: box.w, h: box.h }, box.x, box.y);
+  };
+
+  const cancelActiveDrag = () => {
+    drag.current = null;
+    setDrawPreview(null);
+    setConnectorDraft(null);
+    setConnectorHoverId(null);
+    setMarquee(null);
+    setSnapGuides([]);
+    setMoveTooltip(null);
+    setLive(null);
+  };
+
+  const syncPointerModifiers = (event: { shiftKey: boolean; altKey: boolean; metaKey: boolean; ctrlKey: boolean }) => {
+    setModifiers((m) => ({
+      ...m,
+      shift: event.shiftKey,
+      alt: event.altKey,
+      meta: event.metaKey || event.ctrlKey,
+    }));
+  };
+
+  const addTemplate = (templateId: string, x?: number, y?: number) => {
+    const canvas = pageCanvas(doc, pageDeviceView);
+    const centerX = x ?? canvas.width / 2;
+    const centerY = y ?? canvas.height / 2;
+    const built = insertTemplateElements(templateId, centerX, centerY, pageElements(doc, pageDeviceView));
+    if (!built?.length) return;
+    const placed = built.map((el) => placeOnCanvas(el, canvas));
+    replace([...pageElements(doc, pageDeviceView), ...placed]);
+    setSelected(placed.map((el) => el.id));
+  };
+
+  const addIconFromLibrary = (iconName: string, x?: number, y?: number) => {
+    const size = 24;
+    const el = placeOnCanvas(
+      {
+        ...defaultElement("Icon", x ?? (pageCanvas(doc, pageDeviceView).width - size) / 2, y ?? (pageCanvas(doc, pageDeviceView).height - size) / 2, pageElements(doc, pageDeviceView)),
+        props: { name: iconName, size, color: "foreground" },
+        label: iconDisplayLabel(iconName),
+        w: size,
+        h: size,
+      },
+      pageCanvas(doc, pageDeviceView),
+    );
+    replace([...pageElements(doc, pageDeviceView), el]);
+    setSelected([el.id]);
+  };
+
+  const selectedEls = boardElementsFor(view).filter((el) => selected.includes(el.id));
+  const one = selectedEls.length === 1 ? selectedEls[0] : null;
+  const inspect = one && edit?.id === one.id ? applyInlineDraft(one, edit) : one;
+  const notes = useMemo(() => noteNumbers(pageElements(view, pageDeviceView)), [pageElements(view, pageDeviceView)]);
+
+  const updateOne = (patch: Partial<WireframeElement>) => {
+    if (!one) return;
+    const elements = pageElements(doc, pageDeviceView);
+    replace(
+      elements.map((el) => {
+        if (el.id !== one.id) return el;
+        const next = { ...el, ...patch };
+        return isConnector(next) ? refreshConnector(next, elements) : next;
+      }),
+    );
+  };
+
+  const updateMany = (mapper: (el: WireframeElement) => WireframeElement) => {
+    replace(pageElements(doc, pageDeviceView).map((el) => mapper(el)));
+  };
+
+  const replaceElement = (next: WireframeElement) => {
+    const elements = relayoutPageStacks(pageElements(doc, pageDeviceView).map((el) => (el.id === next.id ? next : el)));
+    replace(elements);
+  };
+
+  const setProp = (key: string, value: PropValue) => {
+    if (!one) return;
+    if (one.type === "Radio" && key === "checked") {
+      replace(setRadioChecked(pageElements(doc, pageDeviceView), one.id, value === true));
+      return;
+    }
+    updateOne({ props: { ...one.props, [key]: value } });
+  };
+
+  const removeSelected = () => {
+    if (!selected.length) return;
+    void recordRiskySnapshot();
+    const removed = new Set(selected);
+    const remaining = orphanChildren(pageElements(doc, pageDeviceView).filter((el) => !removed.has(el.id)), removed);
+    replace(detachConnectorsOnDelete(remaining, removed));
+    setSelected([]);
+  };
+
+  const duplicateSelected = () => {
+    if (!selected.length) return;
+    const copies = pageElements(doc, pageDeviceView)
+      .filter((el) => selected.includes(el.id))
+      .map((el) => placeOnCanvas({ ...structuredClone(el), id: newElementId(), x: el.x + SNAP * 2, y: el.y + SNAP * 2 }, pageCanvas(doc, pageDeviceView)));
+    replace([...pageElements(doc, pageDeviceView), ...copies]);
+    setSelected(copies.map((el) => el.id));
+  };
+
+  const copySelected = () => {
+    clipboard.current = selectedEls.map((el) => structuredClone(el));
+  };
+
+  const cutSelected = () => {
+    copySelected();
+    removeSelected();
+  };
+
+  const groupSelected = () => {
+    if (selected.length < 2) return;
+    replace(groupIds(pageElements(doc, pageDeviceView), selected));
+  };
+
+  const ungroupSelected = () => {
+    replace(ungroupIds(pageElements(doc, pageDeviceView), selected));
+  };
+
+  const toggleLockSelected = () => {
+    if (!selected.length) return;
+    const pick = new Set(selected);
+    const locking = pageElements(doc, pageDeviceView).some((el) => pick.has(el.id) && !el.locked);
+    replace(pageElements(doc, pageDeviceView).map((el) => (pick.has(el.id) ? { ...el, locked: locking } : el)));
+  };
+
+  const setHiddenSelected = (hidden?: boolean) => {
+    if (!selected.length) return;
+    const pick = new Set(selected);
+    const nextHidden = hidden ?? !pageElements(doc, pageDeviceView).some((el) => pick.has(el.id) && el.hidden);
+    replace(pageElements(doc, pageDeviceView).map((el) => (pick.has(el.id) ? { ...el, hidden: nextHidden } : el)));
+  };
+
+  const paste = () => {
+    if (!clipboard.current.length) return;
+    const copies = clipboard.current.map((el) =>
+      placeOnCanvas({ ...structuredClone(el), id: newElementId(), x: el.x + SNAP * 2, y: el.y + SNAP * 2 }, pageCanvas(doc, pageDeviceView)),
+    );
+    clipboard.current = copies;
+    replace([...pageElements(doc, pageDeviceView), ...copies]);
+    setSelected(copies.map((el) => el.id));
+  };
+
+  const commitName = () => {
+    const name = nameDraft.trim() || t("protoUntitled");
+    setNameDraft(name);
+    if (name !== doc.name) commit({ ...doc, name });
+  };
+
+  const applyAlign = (edge: AlignEdge) => {
+    if (!selected.length) return;
+    replace(alignElements(pageElements(doc, pageDeviceView), selected, edge, pageCanvas(doc, pageDeviceView)));
+  };
+
+  const applyDistribute = (axis: DistributeAxis) => {
+    if (selected.length < 3) return;
+    replace(distributeElements(pageElements(doc, pageDeviceView), selected, axis));
+  };
+
+  const fitZoom = () => {
+    const pane = canvasPaneRef.current;
+    if (!pane) return;
+    setZoom(zoomToFit(pageCanvas(doc, pageDeviceView).width, pageCanvas(doc, pageDeviceView).height, pane.clientWidth, pane.clientHeight));
+  };
+
+  const zoomSelection = () => {
+    const pane = canvasPaneRef.current;
+    const bounds = selectionRect(pageElements(doc, pageDeviceView), selected);
+    if (!pane || !bounds) return;
+    setZoom(zoomToBounds(bounds, pane.clientWidth, pane.clientHeight));
+  };
+
+  const toggleMenu = (id: ToolbarMenu) => setMenu((was) => (was === id ? null : id));
+
+  const nudgeLayer = (delta: 1 | -1) => {
+    if (!selected.length) return;
+    replace(nudgeZOrder(pageElements(doc, pageDeviceView), selected, delta));
+  };
+
+  const openContextMenu = (x: number, y: number, target: MenuTarget) => {
+    setContextMenu({ x, y, target });
+  };
+
+  const boardPoint = (event: { clientX: number; clientY: number }) => {
+    const box = boardRef.current?.getBoundingClientRect();
+    if (!box) return { x: 0, y: 0 };
+    return { x: (event.clientX - box.left) / zoom, y: (event.clientY - box.top) / zoom };
+  };
+
+  const onPanePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 && event.button !== 1) return;
+    if (!spaceHeld.current && event.button !== 1) return;
+    const pane = canvasPaneRef.current;
+    if (!pane) return;
+    drag.current = {
+      kind: "pan",
+      startX: event.clientX,
+      startY: event.clientY,
+      scrollLeft: pane.scrollLeft,
+      scrollTop: pane.scrollTop,
+    };
+    setPanning(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const onPanePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const current = drag.current;
+    if (current?.kind !== "pan") return;
+    const pane = canvasPaneRef.current;
+    if (!pane) return;
+    pane.scrollLeft = current.scrollLeft - (event.clientX - current.startX);
+    pane.scrollTop = current.scrollTop - (event.clientY - current.startY);
+  };
+
+  const onPanePointerUp = () => {
+    if (drag.current?.kind === "pan") {
+      drag.current = null;
+      setPanning(false);
+    }
+  };
+
+  const onBoardPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    if (spaceHeld.current) return;
+    if ((event.target as HTMLElement).closest("input")) return;
+    syncPointerModifiers(event);
+    setContextMenu(null);
+    const handle = (event.target as HTMLElement).dataset.handle as Handle | undefined;
+    const id = (event.target as HTMLElement).closest("[data-el]")?.getAttribute("data-el");
+    const p = boardPoint(event);
+    const stackHandle = (event.target as HTMLElement).dataset.stackHandle;
+    if (stackHandle && one && isAutoLayoutStack(one)) {
+      const [mode, arg] = stackHandle.split(":") as ["gap" | "padding", string];
+      drag.current = {
+        kind: "stackLayout",
+        stackId: one.id,
+        mode,
+        arg,
+        ox: p.x,
+        oy: p.y,
+        start: readStackLayout(one),
+      };
+      event.currentTarget.setPointerCapture(event.pointerId);
+      return;
+    }
+    const connectorHit = (event.target as HTMLElement).closest("[data-connector-hit]")?.getAttribute("data-connector-hit");
+    if (connectorHit) {
+      if (!selected.includes(connectorHit)) setSelected([connectorHit]);
+      const which = (event.target as HTMLElement).dataset.connectorHandle as "start" | "end" | "bend" | undefined;
+      if (which) {
+        drag.current = { kind: "connectorHandle", id: connectorHit, which };
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }
+      return;
+    }
+    if (commentToolActive && !handle) {
+      const hit = elementAtPoint(pageElements(view, pageDeviceView), p.x, p.y);
+      setCommentDraft({ x: p.x, y: p.y, elementId: hit?.id });
+      setCommentComposeOpen(true);
+      return;
+    }
+    if (pendingTool && isConnectorTool(pendingTool) && !handle) {
+      const anchorEl = (event.target as HTMLElement).dataset.anchorEl;
+      const anchorName = (event.target as HTMLElement).dataset.anchor as ConnectorAnchor | undefined;
+      const els = pageElements(view, pageDeviceView);
+      let fromElementId: string | undefined;
+      let fromAnchor: ConnectorAnchor | undefined;
+      let fromX = p.x;
+      let fromY = p.y;
+      if (anchorEl && anchorName) {
+        fromElementId = anchorEl;
+        fromAnchor = anchorName;
+        const shape = els.find((item) => item.id === anchorEl);
+        if (shape) {
+          const pt = anchorPoint(shape, anchorName);
+          fromX = pt.x;
+          fromY = pt.y;
+        }
+      } else {
+        const shape = shapeAtPoint(els, p.x, p.y);
+        if (shape) {
+          fromElementId = shape.id;
+          const picked = anchorAtPoint(shape, p.x, p.y);
+          fromAnchor = picked ?? undefined;
+          const pt = picked ? anchorPoint(shape, picked) : { x: p.x, y: p.y };
+          fromX = pt.x;
+          fromY = pt.y;
+        }
+      }
+      drag.current = { kind: "connectorDraw", fromElementId, fromAnchor, fromX, fromY };
+      setConnectorDraft({ from: { x: fromX, y: fromY }, to: { x: p.x, y: p.y } });
+      event.currentTarget.setPointerCapture(event.pointerId);
+      return;
+    }
+    if (pendingTool && isDragDrawTool(pendingTool) && !handle) {
+      drag.current = {
+        kind: "draw",
+        tool: pendingTool,
+        ax: p.x,
+        ay: p.y,
+        panX: 0,
+        panY: 0,
+        ex: p.x,
+        ey: p.y,
+        lastX: p.x,
+        lastY: p.y,
+      };
+      setDrawPreview(null);
+      event.currentTarget.setPointerCapture(event.pointerId);
+      return;
+    }
+    if (pendingTool && !isConnectorTool(pendingTool) && !handle) {
+      addQuickTool(pendingTool, p.x, p.y);
+      return;
+    }
+    if (handle && one) {
+      drag.current = { kind: "resize", id: one.id, handle, orig: { ...one, props: { ...one.props } } };
+      event.currentTarget.setPointerCapture(event.pointerId);
+      return;
+    }
+    if (id) {
+      const target = pageElements(view, pageDeviceView).find((item) => item.id === id);
+      if (target?.locked) return;
+      const picked = clickSelection(selected, id, event.metaKey || event.ctrlKey, event.shiftKey);
+      let ids = expandToGroups(pageElements(view, pageDeviceView), picked);
+      setSelected(ids);
+      let elements = pageElements(doc, pageDeviceView);
+      if (event.altKey) {
+        const copies = elements
+          .filter((el) => ids.includes(el.id))
+          .map((el) =>
+            placeOnCanvas({ ...structuredClone(el), id: newElementId(), x: el.x, y: el.y }, pageCanvas(doc, pageDeviceView)),
+          );
+        elements = [...elements, ...copies];
+        ids = copies.map((el) => el.id);
+        setLive(withBoardElements(elements));
+        setSelected(ids);
+      }
+      const orig: Record<string, { x: number; y: number }> = {};
+      const source = live ? pageElements(live, pageDeviceView) : elements;
+      for (const el of source) if (ids.includes(el.id)) orig[el.id] = { x: el.x, y: el.y };
+      const snapPeers = boardElementsFor(doc);
+      const snapIndex = snapPeers.length >= SNAP_SPATIAL_MIN_PEERS ? new ElementSpatialIndex(snapPeers) : null;
+      drag.current = { kind: "move", ids, ox: p.x, oy: p.y, orig, snapIndex };
+      event.currentTarget.setPointerCapture(event.pointerId);
+      return;
+    }
+    if (!event.shiftKey && !event.metaKey && !event.ctrlKey) setSelected([]);
+    drag.current = { kind: "marquee", ox: p.x, oy: p.y, contain: event.altKey };
+    setMarquee(normalizeRect(p.x, p.y, p.x, p.y));
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const onBoardPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const current = drag.current;
+    const p = boardPoint(event);
+    syncPointerModifiers(event);
+    if (!current) {
+      if (pendingTool && isConnectorTool(pendingTool)) {
+        setConnectorHoverId(shapeAtPoint(pageElements(view, pageDeviceView), p.x, p.y)?.id ?? null);
+      } else setConnectorHoverId(null);
+      if (event.altKey) {
+        const hit = elementAtPoint(pageElements(view, pageDeviceView), p.x, p.y);
+        setDistanceLines(hit ? distanceLinesFor(hit, pageElements(view, pageDeviceView)) : []);
+      } else setDistanceLines([]);
+      return;
+    }
+    if (current.kind === "connectorDraw") {
+      setConnectorDraft({ from: { x: current.fromX, y: current.fromY }, to: { x: p.x, y: p.y } });
+      setConnectorHoverId(shapeAtPoint(pageElements(view, pageDeviceView), p.x, p.y)?.id ?? null);
+      return;
+    }
+    if (current.kind === "connectorHandle") {
+      const base = live ? pageElements(live, pageDeviceView) : pageElements(doc, pageDeviceView);
+      setLive(
+        patchElements(
+          doc,
+          base.map((el) => {
+            if (el.id !== current.id || !isConnector(el)) return el;
+            let patch: Partial<ConnectorProps> = {};
+            if (current.which === "bend") {
+              patch = { bendX: p.x, bendY: p.y };
+            } else if (current.which === "start") {
+              const shape = shapeAtPoint(base, p.x, p.y);
+              patch = shape
+                ? { fromId: shape.id, fromAnchor: anchorAtPoint(shape, p.x, p.y) ?? "auto", startX: 0, startY: 0 }
+                : { fromId: "", fromAnchor: "auto", startX: p.x, startY: p.y };
+            } else {
+              const shape = shapeAtPoint(base, p.x, p.y);
+              patch = shape
+                ? { toId: shape.id, toAnchor: anchorAtPoint(shape, p.x, p.y) ?? "auto", endX: 0, endY: 0 }
+                : { toId: "", toAnchor: "auto", endX: p.x, endY: p.y };
+            }
+            const next = { ...el, props: { ...el.props, ...connectorPropsToRecord(patch) } };
+            return refreshConnector(next, base);
+          }),
+          pageDeviceView,
+        ),
+      );
+      return;
+    }
+    if (current.kind === "draw") {
+      if (spaceHeld.current) {
+        current.panX += p.x - current.lastX;
+        current.panY += p.y - current.lastY;
+      } else {
+        current.ex = p.x;
+        current.ey = p.y;
+      }
+      current.lastX = p.x;
+      current.lastY = p.y;
+      const box = drawRect(
+        current.ax + current.panX,
+        current.ay + current.panY,
+        current.ex,
+        current.ey,
+        current.tool.type,
+        { shift: event.shiftKey, alt: event.altKey },
+      );
+      setDrawPreview(box);
+      return;
+    }
+    if (current.kind === "marquee") {
+      setMarquee(normalizeRect(current.ox, current.oy, p.x, p.y));
+      return;
+    }
+    if (current.kind === "move") {
+      let dx = p.x - current.ox;
+      let dy = p.y - current.oy;
+      const constrained = constrainMove(dx, dy, event.shiftKey);
+      dx = constrained.dx;
+      dy = constrained.dy;
+      const baseElements = live ? boardElementsFor(live) : boardElementsFor(doc);
+      const bounds = selectionRect(
+        baseElements.map((el) => {
+          const from = current.orig[el.id];
+          return from ? { ...el, x: from.x + dx, y: from.y + dy } : el;
+        }),
+        current.ids,
+      );
+      const guides: SnapGuide[] = [];
+      const snapOff = event.metaKey || event.ctrlKey;
+      if (bounds && !snapOff) {
+        const peerSnap = snapRectToPeers(bounds, boardElementsFor(doc), new Set(current.ids), undefined, current.snapIndex ?? null);
+        dx += peerSnap.dx;
+        dy += peerSnap.dy;
+        guides.push(...peerSnap.guides);
+      }
+      const grid = snapGrid && !snapOff ? settings.protoGridStep : null;
+      const snapped = snapDelta(dx, dy, grid);
+      setSnapGuides(guides);
+      if (bounds) {
+        setMoveTooltip({ x: bounds.left + snapped.dx, y: bounds.top + snapped.dy, w: bounds.right - bounds.left, h: bounds.bottom - bounds.top });
+      }
+      const moved = moveElementsByDelta(baseElements, new Set(current.ids), snapped.dx, snapped.dy, current.orig);
+      setLive(withBoardElements(refreshConnectorsForElements(moved, new Set(current.ids))));
+      return;
+    }
+    if (current.kind === "stackLayout") {
+      const stack = pageElements(doc, pageDeviceView).find((el) => el.id === current.stackId);
+      if (!stack || !isAutoLayoutStack(stack)) return;
+      const layout = { ...current.start };
+      const dx = p.x - current.ox;
+      const dy = p.y - current.oy;
+      const vertical = layout.direction === "vertical";
+      if (current.mode === "gap") {
+        layout.gap = snap(Math.max(0, layout.gap + (vertical ? dy : dx)));
+      } else {
+        const edge = current.arg as "top" | "right" | "bottom" | "left";
+        const idx = { top: 0, right: 1, bottom: 2, left: 3 }[edge];
+        const delta = edge === "top" || edge === "bottom" ? dy : dx;
+        const sign = edge === "top" || edge === "left" ? 1 : -1;
+        const nextPad = [...layout.padding] as [number, number, number, number];
+        nextPad[idx] = snap(Math.max(0, nextPad[idx] + delta * sign));
+        layout.padding = nextPad;
+      }
+      const nextStack = writeStackLayout(stack, layout);
+      setLive(patchElements(doc, relayoutPageStacks(pageElements(doc, pageDeviceView).map((el) => (el.id === stack.id ? nextStack : el))), pageDeviceView));
+      return;
+    }
+    if (current.kind === "resize") {
+      const mods = { shift: event.shiftKey, alt: event.altKey };
+      const orig = current.orig;
+      const resizedEl = resized(orig, current.handle, p.x, p.y, mods);
+      let next = pageElements(doc, pageDeviceView).map((el) => (el.id === current.id ? resizedEl : el));
+      const before = { w: orig.w, h: orig.h };
+      const after = { w: resizedEl.w, h: resizedEl.h };
+      if (before.w !== after.w || before.h !== after.h) {
+        next = applyConstraintsToChildren(next, current.id, before, after);
+        next = relayoutPageStacks(next);
+      }
+      setLive(patchElements(doc, next, pageDeviceView));
+    }
+  };
+
+  const onBoardPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const current = drag.current;
+    drag.current = null;
+    setSnapGuides([]);
+    setMoveTooltip(null);
+    syncPointerModifiers(event);
+    if (current?.kind === "connectorDraw") {
+      setConnectorDraft(null);
+      setConnectorHoverId(null);
+      const p = boardPoint(event);
+      const els = pageElements(doc, pageDeviceView);
+      const targetShape = shapeAtPoint(els, p.x, p.y);
+      const toAnchor = targetShape ? anchorAtPoint(targetShape, p.x, p.y) ?? undefined : undefined;
+      const connector = createConnectorElement(
+        newElementId(),
+        nextLabel("Connector", els),
+        els,
+        { elementId: current.fromElementId, anchor: current.fromAnchor, x: current.fromX, y: current.fromY },
+        { elementId: targetShape?.id, anchor: toAnchor, x: p.x, y: p.y },
+      );
+      const next = [...els, refreshConnector(connector, [...els, connector])];
+      replace(next);
+      setSelected([connector.id]);
+      return;
+    }
+    if (current?.kind === "connectorHandle") {
+      setConnectorHoverId(null);
+      if (live) commit(live);
+      else setLive(null);
+      return;
+    }
+    if (current?.kind === "draw") {
+      const p = boardPoint(event);
+      setDrawPreview(null);
+      const dist = Math.hypot(p.x - current.ax, p.y - current.ay);
+      if (dist < CLICK_DRAG_THRESHOLD) {
+        addQuickTool(current.tool, current.ax, current.ay);
+      } else {
+        const box = drawRect(
+          current.ax + current.panX,
+          current.ay + current.panY,
+          current.ex,
+          current.ey,
+          current.tool.type,
+          { shift: event.shiftKey, alt: event.altKey },
+        );
+        placeDrawnElement(current.tool, box);
+      }
+      return;
+    }
+    if (current?.kind === "marquee") {
+      const p = boardPoint(event);
+      const rect = normalizeRect(current.ox, current.oy, p.x, p.y);
+      setMarquee(null);
+      const hits = marqueeHitTest(pageElements(view, pageDeviceView), rect, current.contain ? "contain" : "intersect");
+      setSelected(expandToGroups(pageElements(view, pageDeviceView), hits));
+      return;
+    }
+    setMarquee(null);
+    if (current?.kind === "move") {
+      const p = boardPoint(event);
+      const grid = snapGrid ? settings.protoGridStep : null;
+      const raw = snapDelta(p.x - current.ox, p.y - current.oy, grid);
+      if (raw.dx === 0 && raw.dy === 0) {
+        const el = pageElements(doc, pageDeviceView).find((item) => current.ids[0] === item.id);
+        if (el && event.detail === 1 && (el.type === "Radio" || el.type === "Checkbox") && p.x - el.x < 28) {
+          setLive(null);
+          replace(el.type === "Radio" ? checkRadio(pageElements(doc, pageDeviceView), el.id) : toggleCheckbox(pageElements(doc, pageDeviceView), el.id));
+          return;
+        }
+        setLive(null);
+        return;
+      }
+    }
+    if (!current || !live) {
+      setLive(null);
+      return;
+    }
+    commit(live);
+  };
+
+  const onBoardContextMenu = (event: ReactMouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const id = (event.target as HTMLElement).closest("[data-el]")?.getAttribute("data-el");
+    if (id && !selected.includes(id)) setSelected(expandToGroups(pageElements(view, pageDeviceView), [id]));
+    const target: MenuTarget = id ? { kind: "canvasElement", elementId: id } : { kind: "canvasEmpty" };
+    openContextMenu(event.clientX, event.clientY, target);
+  };
+
+  const onContextAction = (action: MenuActionId, target: MenuTarget) => {
+    const zOp = zOrderOpFromAction(action);
+    if (zOp) {
+      replace(applyZOrder(pageElements(doc, pageDeviceView), selected, zOp));
+      return;
+    }
+    if (action === "cut") cutSelected();
+    else if (action === "copy") copySelected();
+    else if (action === "paste") paste();
+    else if (action === "duplicate") duplicateSelected();
+    else if (action === "delete") removeSelected();
+    else if (action === "group") groupSelected();
+    else if (action === "ungroup") ungroupSelected();
+    else if (action === "lock" || action === "unlock") toggleLockSelected();
+    else if (action === "hide") setHiddenSelected(true);
+    else if (action === "show") setHiddenSelected(false);
+    else if (action === "rename") {
+      if (target.kind === "page" || target.kind === "pageTab") setRenamePageId(target.pageId);
+      else if (target.kind === "outlineLayer" || target.kind === "canvasElement") {
+        const id = target.kind === "outlineLayer" ? target.elementId : target.elementId;
+        if (!selected.includes(id)) setSelected(expandToGroups(pageElements(view, pageDeviceView), [id]));
+        setRenameElementId(id);
+        setLeftTab("outline");
+      }
+    } else if (action === "duplicatePage" && (target.kind === "page" || target.kind === "pageTab")) {
+      duplicatePage(target.pageId);
+    } else if (action === "deletePage" && (target.kind === "page" || target.kind === "pageTab")) {
+      deletePage(target.pageId);
+    } else if (action === "addPage") addPage();
+    else if (action === "closeTab" && target.kind === "pageTab") {
+      setOpenTabIds((tabs) => tabs.filter((id) => id !== target.pageId));
+    } else if (action === "insertPalette" && target.kind === "paletteTile") {
+      const tile = PALETTE_BY_ID[target.tileId];
+      if (tile) addTile(tile);
+    } else if (action === "insertTemplate" && target.kind === "templateTile") {
+      addTemplate(target.templateId);
+    } else if (action === "insertIcon" && target.kind === "iconTile") {
+      addIconFromLibrary(target.iconName);
+    } else if (action === "selectAll") {
+      setSelected(boardElementsFor(doc).map((el) => el.id));
+    } else if (action === "components" && target.kind === "canvasEmpty") {
+      setPaletteView("components");
+    } else if (action === "createComponent") {
+      const applied = applyComponentFromSelection(doc, pageElements(doc, pageDeviceView), selected);
+      if (applied) {
+        commit(updateActivePage(applied.doc, (page) => ({ ...page, elements: applied.elements })));
+        setSelected([applied.elements[applied.elements.length - 1]!.id]);
+      }
+    } else if (action === "editComponent") {
+      if (target.kind === "componentTile") {
+        setEditScope({ kind: "component", componentId: target.componentId });
+        setSelected([]);
+        return;
+      }
+      const id = target.kind === "canvasElement" || target.kind === "outlineLayer" ? target.elementId : one?.id;
+      const el = id ? pageElements(view, pageDeviceView).find((item) => item.id === id) : one;
+      const scope = el ? enterScopeForElement(el, pageElements(view, pageDeviceView)) : null;
+      if (scope?.kind === "component") {
+        setEditScope(scope);
+        setSelected([]);
+      }
+    } else if (action === "detachInstance" && one?.type === "Instance") {
+      const component = findComponent(doc, instanceComponentId(one));
+      if (!component) return;
+      const expanded = detachInstanceElements(one, component);
+      replace([...pageElements(doc, pageDeviceView).filter((el) => el.id !== one.id), ...expanded]);
+      setSelected(expanded.map((el) => el.id));
+    } else if (action === "deleteComponent" && target.kind === "componentTile") {
+      setDeleteComponentId(target.componentId);
+    }
+  };
+
+  const onDrop = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const raw = event.dataTransfer.getData("text/plain");
+    const p = boardPoint(event);
+    if (raw.startsWith(ICON_DRAG_PREFIX)) {
+      const iconName = raw.slice(ICON_DRAG_PREFIX.length);
+      if (!iconName) return;
+      addIconFromLibrary(iconName, p.x - 12, p.y - 12);
+      return;
+    }
+    if (raw.startsWith(TEMPLATE_DRAG_PREFIX)) {
+      const templateId = raw.slice(TEMPLATE_DRAG_PREFIX.length);
+      if (!templateId) return;
+      addTemplate(templateId, p.x, p.y);
+      return;
+    }
+    if (raw.startsWith(COMPONENT_DRAG_PREFIX)) {
+      const componentId = raw.slice(COMPONENT_DRAG_PREFIX.length);
+      if (!componentId) return;
+      const inst = createInstanceFromComponent(doc, componentId, p.x, p.y, pageElements(doc, pageDeviceView));
+      if (inst) insertOnBoard(inst, p.x, p.y);
+      return;
+    }
+    const tile = PALETTE_BY_ID[raw];
+    if (!tile) return;
+    const spec = CATALOG_BY_TYPE[tile.type];
+    addTile(tile, p.x - spec.w / 2, p.y - spec.h / 2);
+  };
+
+  const capturePng = async (pixelScale = 2) => {
+    const node = boardRef.current;
+    if (!node) throw new Error(t("protoCaptureFailed"));
+    const lib = await loadScreenshotLibrary();
+    return lib.domToBlob(node, {
+      scale: pixelScale,
+      type: "image/png",
+      filter: (item) => !(item instanceof Element && item.hasAttribute("data-proto-skip")),
+    });
+  };
+
+  const refreshPublishStatus = useCallback(async () => {
+    if (!openedStem) {
+      setPublishPublished(false);
+      setPreviewPath(null);
+      return;
+    }
+    const status = await rpc.call("getWireframePublishStatus", { threadId, name: openedStem, locale });
+    setPublishPublished(status.published);
+    setPreviewPath(status.previewPath);
+  }, [locale, openedStem, rpc, threadId]);
+
+  useEffect(() => {
+    void refreshPublishStatus().catch(() => {
+      setPublishPublished(false);
+      setPreviewPath(null);
+    });
+  }, [refreshPublishStatus]);
+
+  const previewUrl = previewPath ? `${window.location.origin}${PLUGIN_HTTP_PREFIX}${previewPath}` : null;
+
+  const recordRiskySnapshot = async () => {
+    if (!openedStem) return;
+    try {
+      await rpc.call("appendWireframeSnapshot", {
+        threadId,
+        name: openedStem,
+        json: JSON.stringify(doc),
+        reason: "risky",
+        locale,
+      });
+    } catch {
+      /* history is best-effort */
+    }
+  };
+
+  const persist = async (name: string, overwrite: boolean, snapshotReason: "save" | "autosave" = "save") => {
+    const png = await capturePng();
+    const json = JSON.stringify({ ...doc, name });
+    await markWrittenJson(json);
+    const saved = await rpc.call("saveWireframe", {
+      threadId,
+      name,
+      json,
+      pngBase64: await blobToBase64(png),
+      overwrite,
+      locale,
+      snapshotReason,
+    });
+    lastHistorySnapshotAt.current = Date.now();
+    commit({ ...doc, name });
+    setOpenedStem(saved.name);
+    return { ...saved, png };
+  };
+
+  autosaveRef.current = async () => {
+    const name = openedStem ?? t("protoUntitled");
+    let pngBase64: string | undefined;
+    try {
+      pngBase64 = await blobToBase64(await capturePng());
+    } catch {
+      pngBase64 = undefined;
+    }
+    const snapshotDue = Date.now() - lastHistorySnapshotAt.current >= HISTORY_SNAPSHOT_INTERVAL_MS;
+    const json = JSON.stringify({ ...doc, name });
+    await markWrittenJson(json);
+    const saved = await rpc.call("saveWireframe", {
+      threadId,
+      name,
+      json,
+      pngBase64,
+      overwrite: true,
+      locale,
+      snapshotReason: snapshotDue ? "autosave" : undefined,
+    });
+    if (snapshotDue) lastHistorySnapshotAt.current = Date.now();
+    setOpenedStem(saved.name);
+  };
+
+  const sendPreviewToChat = async () => {
+    const node = previewBoardRef.current;
+    if (!node) return;
+    setBusy(true);
+    try {
+      const lib = await loadScreenshotLibrary();
+      const png = await lib.domToBlob(node, {
+        scale: 2,
+        type: "image/png",
+        filter: (item) => !(item instanceof Element && item.hasAttribute("data-proto-skip")),
+      });
+      const files = [new File([png], `${doc.name}-preview.png`, { type: "image/png" })];
+      const attach = (composer as typeof composer & { experimental_vkAttachFiles?: (files: File[]) => Promise<void> }).experimental_vkAttachFiles;
+      if (typeof attach === "function") {
+        await attach.call(composer, files);
+        toast.success(t("protoSentChat"));
+        return;
+      }
+      composer.updateText((draft) => `${draft.trim() ? `${draft.trimEnd()}\n\n` : ""}${t("protoPreviewSendFallback")}\n\n`);
+      composer.focus();
+      toast.success(t("protoSentChat"));
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const exportStem = () => openedStem ?? doc.name;
+
+  const captureSpecAssets = async (stem: string) => {
+    const startPageId = doc.activePageId;
+    const images: { pageId: string; relPath: string }[] = [];
+    const specImages: { relPath: string; base64: string }[] = [];
+    const prevBadges = badges;
+    if (!prevBadges) patchStudioSettings({ protoBadges: true });
+    for (const page of docRef.current.pages) {
+      if (page.id !== docRef.current.activePageId) {
+        commit(setActivePageId(docRef.current, page.id));
+        await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      }
+      const rel = specImageRelPath(stem, page);
+      const png = await capturePng();
+      specImages.push({ relPath: rel, base64: await blobToBase64(png) });
+      images.push({ pageId: page.id, relPath: rel });
+    }
+    if (docRef.current.activePageId !== startPageId) {
+      commit(setActivePageId(docRef.current, startPageId));
+    }
+    if (!prevBadges) patchStudioSettings({ protoBadges: false });
+    return { images, specImages };
+  };
+
+  const writeSpecDeliverables = async (stem: string, attachChat = false) => {
+    const { images, specImages } = await captureSpecAssets(stem);
+    const markdown = buildWireframeSpecMarkdown(docRef.current, stem, images, pageDeviceView);
+    const saved = await rpc.call("writePrototypeDeliverables", {
+      threadId,
+      stem,
+      specMarkdown: markdown,
+      specImages,
+      locale,
+    });
+    if (attachChat) {
+      const files = [new File([markdown], `${stem}.spec.md`, { type: "text/markdown" })];
+      const attach = (composer as typeof composer & { experimental_vkAttachFiles?: (files: File[]) => Promise<void> }).experimental_vkAttachFiles;
+      if (typeof attach === "function") {
+        await attach.call(composer, files);
+      }
+      const prompt = buildImplementFromSpecPrompt(saved.specPath ?? `${stem}.spec.md`);
+      composer.updateText((draft) => `${draft.trim() ? `${draft.trimEnd()}\n\n` : ""}${prompt}\n\n`);
+      composer.focus();
+    }
+    return saved;
+  };
+
+  const exportSpecification = async () => {
+    setMenu(null);
+    setBusy(true);
+    try {
+      const stem = exportStem();
+      if (!openedStem) await persist(stem, false);
+      await writeSpecDeliverables(stem, false);
+      toast.success(t("protoExportSpecDone"));
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const exportCode = async () => {
+    setMenu(null);
+    setBusy(true);
+    try {
+      const stem = exportStem();
+      if (!openedStem) await persist(stem, false);
+      const { readme, files } = buildWireframeCodeExport(docRef.current, pageDeviceView, settings.protoFidelity);
+      await rpc.call("writePrototypeDeliverables", {
+        threadId,
+        stem,
+        codeReadme: readme,
+        codeFiles: files.map((file) => ({ fileName: file.fileName, content: file.content })),
+        locale,
+      });
+      toast.success(t("protoExportCodeDone"));
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const publishPreview = async () => {
+    setBusy(true);
+    try {
+      const stem = exportStem();
+      if (!openedStem) await persist(stem, false);
+      const result = await rpc.call("publishWireframePreview", {
+        threadId,
+        name: stem,
+        json: JSON.stringify(docRef.current),
+        locale,
+      });
+      setPublishPublished(true);
+      setPreviewPath(result.previewPath);
+      toast.success(t("protoPublishDone"));
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const unpublishPreview = async () => {
+    setBusy(true);
+    try {
+      const stem = exportStem();
+      await rpc.call("unpublishWireframePreview", { threadId, name: stem, locale });
+      setPublishPublished(false);
+      setPreviewPath(null);
+      toast.success(t("protoPublishUnpublished"));
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const exportPdfDownload = async (includeNotes: boolean) => {
+    setBusy(true);
+    const startPageId = doc.activePageId;
+    const startDevice = pageDeviceView;
+    try {
+      const stem = exportStem();
+      const pages: { widthPt: number; heightPt: number; jpeg: Uint8Array }[] = [];
+      for (const page of docRef.current.pages) {
+        if (page.id !== docRef.current.activePageId) {
+          commit(setActivePageId(docRef.current, page.id));
+          await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+        }
+        const canvas = pageCanvas(docRef.current, pageDeviceView);
+        const png = await capturePng(2);
+        const jpeg = await pngBlobToJpegBytes(png);
+        pages.push({ widthPt: canvas.width, heightPt: canvas.height, jpeg });
+      }
+      if (docRef.current.activePageId !== startPageId) commit(setActivePageId(docRef.current, startPageId));
+      const pdf = buildPdfFromJpegPages(pages, collectPdfNotes(docRef.current, includeNotes));
+      triggerDownload(pdf, pdfExportFileName(stem), "application/pdf");
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setPageDeviceView(startDevice);
+      setBusy(false);
+    }
+  };
+
+  const exportSvgDownload = async () => {
+    setBusy(true);
+    try {
+      const stem = exportStem();
+      const page = getActivePage(docRef.current);
+      const svg = buildPageSvg(docRef.current, page.id, pageDeviceView);
+      triggerDownload(new TextEncoder().encode(svg), svgExportFileName(stem, page), "image/svg+xml");
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const exportPngSet = async (devices: readonly string[], scales: readonly PngExportScale[]) => {
+    setBusy(true);
+    const startPageId = doc.activePageId;
+    const startDevice = pageDeviceView;
+    try {
+      const stem = exportStem();
+      for (const device of devices as PageDeviceView[]) {
+        setPageDeviceView(device);
+        await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+        for (const page of docRef.current.pages) {
+          if (page.id !== docRef.current.activePageId) {
+            commit(setActivePageId(docRef.current, page.id));
+            await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+          }
+          for (const scale of scales) {
+            const png = await capturePng(2 * scale);
+            triggerDownload(png, pngExportFileName(stem, page, device, scale), "image/png");
+          }
+        }
+      }
+      if (docRef.current.activePageId !== startPageId) commit(setActivePageId(docRef.current, startPageId));
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setPageDeviceView(startDevice);
+      setBusy(false);
+    }
+  };
+
+  const importPublishFile = async (file: File) => {
+    setBusy(true);
+    try {
+      const placement = importFileText(file.name, await file.text());
+      commit(mergeImportOntoPage(docRef.current, placement));
+      toast.success(t("protoImportDone"));
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sendBuildToChat = async () => {
+    setMenu(null);
+    setBusy(true);
+    try {
+      const stem = exportStem();
+      if (!openedStem) await persist(stem, false);
+      await writeSpecDeliverables(stem, true);
+      toast.success(t("protoSendBuildDone"));
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sendToChat = async (kind: SendKind) => {
+    setMenu(null);
+    setBusy(true);
+    try {
+      const saved = await persist(openedStem ?? doc.name, Boolean(openedStem));
+      const files: File[] = [];
+      if (kind !== "json") files.push(new File([saved.png], `${saved.name}.png`, { type: "image/png" }));
+      if (kind !== "png") files.push(new File([JSON.stringify({ ...doc, name: saved.name }, null, 2)], `${saved.name}.wireframe.json`, { type: "application/json" }));
+      const attach = (composer as typeof composer & { experimental_vkAttachFiles?: (files: File[]) => Promise<void> }).experimental_vkAttachFiles;
+      if (typeof attach === "function") {
+        await attach.call(composer, files);
+        toast.success(t("protoSentChat"));
+        return;
+      }
+      const note =
+        kind === "png"
+          ? t("protoSendFallbackPng", { png: saved.pngPath })
+          : kind === "json"
+            ? t("protoSendFallbackJson", { json: saved.jsonPath })
+            : t("protoSendFallback", { json: saved.jsonPath, png: saved.pngPath });
+      composer.updateText((draft) => `${draft.trim() ? `${draft.trimEnd()}\n\n` : ""}${note}\n\n`);
+      composer.focus();
+      toast.success(t("protoSentChat"));
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const save = async (overwrite: boolean) => {
+    setBusy(true);
+    try {
+      const saved = await persist(saveName.trim() || doc.name, overwrite);
+      toast.success(t("protoSavedAs", { name: saved.name }));
+      setSaveOpen(false);
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const loadList = async () => {
+    try {
+      setSavedNames((await rpc.call("listWireframes", { threadId, locale })).names);
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
+
+  const loadOne = async (name: string) => {
+    setBusy(true);
+    try {
+      const loaded = await rpc.call("loadWireframe", { threadId, name, locale });
+      const next = parseWireframe(loaded.json);
+      await markWrittenJson(loaded.json);
+      lastAppliedRemoteHashRef.current = null;
+      commit(next);
+      setOpenedStem(name);
+      setSelected([]);
+      setEdit(null);
+      setOpenTabIds([getActivePage(next).id]);
+      setOpenOpen(false);
+      toast.success(t("protoOpened", { name }));
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const loadHistorySnapshots = async () => {
+    if (!openedStem) return [];
+    const { snapshots } = await rpc.call("listWireframeHistory", { threadId, name: openedStem, locale });
+    return snapshots;
+  };
+
+  const loadHistorySnapshotJson = async (snapshotId: string) => {
+    if (!openedStem) throw new Error(t("protoHistorySaveFirst"));
+    const { json } = await rpc.call("loadWireframeHistory", { threadId, name: openedStem, snapshotId, locale });
+    return json;
+  };
+
+  const restoreHistorySnapshot = async (snapshotId: string) => {
+    if (!openedStem) return;
+    setBusy(true);
+    try {
+      await rpc.call("restoreWireframeHistory", { threadId, name: openedStem, snapshotId, locale });
+      const loaded = await rpc.call("loadWireframe", { threadId, name: openedStem, locale });
+      const next = parseWireframe(loaded.json);
+      commit(next);
+      setSelected([]);
+      setEdit(null);
+      setOpenTabIds([getActivePage(next).id]);
+      lastHistorySnapshotAt.current = Date.now();
+      toast.success(t("protoHistoryRestored"));
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const beginEdit = (el: WireframeElement, next: InlineEdit) => {
+    setSelected([el.id]);
+    setEdit(next);
+  };
+
+  const applyEdit = (current: InlineEdit, elements: WireframeElement[]): WireframeElement[] => {
+    return elements.map((el) => (el.id === current.id && !draftUnchanged(el, current) ? applyInlineDraft(el, current) : el));
+  };
+
+  const closeEdit = (next: InlineEdit | null = null) => {
+    skipBlur.current = true;
+    setEdit(next);
+    requestAnimationFrame(() => {
+      skipBlur.current = false;
+    });
+  };
+
+  const commitEdit = () => {
+    const current = editRef.current;
+    if (!current) return;
+    const el = pageElements(doc, pageDeviceView).find((item) => item.id === current.id);
+    if (!el || draftUnchanged(el, current)) {
+      closeEdit(null);
+      return;
+    }
+    replace(applyEdit(current, pageElements(doc, pageDeviceView)));
+    closeEdit(null);
+  };
+
+  const onInlineKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    event.stopPropagation();
+    const current = editRef.current;
+    if (!current) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeEdit(null);
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      const el = pageElements(doc, pageDeviceView).find((item) => item.id === current.id);
+      if (!el) {
+        closeEdit(null);
+        return;
+      }
+      if (el.type === "Radio" || el.type === "Checkbox") {
+        const result = addChoiceSibling(applyEdit(current, pageElements(doc, pageDeviceView)), el.id, current.draft);
+        replace(result.elements);
+        closeEdit(result.edit);
+        setSelected([result.edit.id]);
+        return;
+      }
+      if (current.target.kind === "item") {
+        const result = enterOnListItem(applyInlineDraft(el, current), current.target.key, current.target.index, current.draft);
+        replace(pageElements(doc, pageDeviceView).map((item) => (item.id === el.id ? result.element : item)));
+        closeEdit({ id: el.id, target: { kind: "item", key: current.target.key, index: result.nextIndex }, draft: "" });
+        return;
+      }
+      commitEdit();
+      return;
+    }
+    if (event.key === "Backspace" && current.target.kind === "item" && current.draft === "") {
+      event.preventDefault();
+      const el = pageElements(doc, pageDeviceView).find((item) => item.id === current.id);
+      if (!el) return;
+      const result = removeEmptyListItem(el, current.target.key, current.target.index);
+      replace(pageElements(doc, pageDeviceView).map((item) => (item.id === el.id ? result.element : item)));
+      if (result.nextIndex === null) closeEdit(null);
+      else closeEdit({ id: el.id, target: { kind: "item", key: current.target.key, index: result.nextIndex }, draft: readDraft(result.element, { kind: "item", key: current.target.key, index: result.nextIndex }) });
+    }
+  };
+
+  const onBoardDoubleClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+    const id = (event.target as HTMLElement).closest("[data-el]")?.getAttribute("data-el");
+    const el = pageElements(view, pageDeviceView).find((item) => item.id === id);
+    if (!el) return;
+    const scope = enterScopeForElement(el, pageElements(view, pageDeviceView));
+    if (scope) {
+      event.preventDefault();
+      setEditScope(scope);
+      setSelected([]);
+      return;
+    }
+    event.preventDefault();
+    const localX = boardPoint(event).x - el.x;
+    const localY = boardPoint(event).y - el.y;
+    const listKey = itemListKey(el.type);
+    if (listKey) {
+      const index = itemIndexAt(el, localX, localY);
+      beginEdit(el, { id: el.id, target: { kind: "item", key: listKey, index }, draft: readDraft(el, { kind: "item", key: listKey, index }) });
+      return;
+    }
+    const key = simpleEditKey(el.type);
+    if (key) beginEdit(el, { id: el.id, target: { kind: "prop", key }, draft: readDraft(el, { kind: "prop", key }) });
+  };
+
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (edit || (event.target as HTMLElement).closest("input, textarea, [role=dialog]")) return;
+    const mod = event.metaKey || event.ctrlKey;
+    const key = event.key.toLowerCase();
+    if (mod && key === "k") {
+      event.preventDefault();
+      setCommandPaletteOpen(true);
+      return;
+    }
+    if (mod && key === "z") {
+      event.preventDefault();
+      if (event.shiftKey) redo();
+      else undo();
+      return;
+    }
+    if (mod && key === "y") {
+      event.preventDefault();
+      redo();
+      return;
+    }
+    if (mod && key === "d") {
+      event.preventDefault();
+      duplicateSelected();
+      return;
+    }
+    if (mod && key === "c") {
+      event.preventDefault();
+      copySelected();
+      return;
+    }
+    if (mod && key === "v") {
+      event.preventDefault();
+      paste();
+      return;
+    }
+    if (mod && key === "x") {
+      event.preventDefault();
+      cutSelected();
+      return;
+    }
+    if (mod && key === "g") {
+      event.preventDefault();
+      if (event.shiftKey) ungroupSelected();
+      else groupSelected();
+      return;
+    }
+    if (mod && key === "l") {
+      event.preventDefault();
+      toggleLockSelected();
+      return;
+    }
+    if (mod && key === "h") {
+      event.preventDefault();
+      if (event.shiftKey) setHiddenSelected(false);
+      else setHiddenSelected(true);
+      return;
+    }
+    if (!mod && event.shiftKey && key === "a" && selected.length > 0 && editScope.kind === "page") {
+      event.preventDefault();
+      const { elements, stackId } = wrapSelectionInStack(pageElements(doc, pageDeviceView), selected);
+      replace(elements);
+      setSelected([stackId]);
+      return;
+    }
+    if (mod && key === "a") {
+      event.preventDefault();
+      setSelected(pageElements(doc, pageDeviceView).map((el) => el.id));
+      return;
+    }
+    if (mod && key === "s") {
+      event.preventDefault();
+      setSaveName(openedStem ?? doc.name);
+      setSaveOpen(true);
+      return;
+    }
+    if (mod && (key === "=" || key === "+")) {
+      event.preventDefault();
+      setZoom((z) => zoomIn(z));
+      return;
+    }
+    if (mod && key === "-") {
+      event.preventDefault();
+      setZoom((z) => zoomOut(z));
+      return;
+    }
+    if (mod && key === "0") {
+      event.preventDefault();
+      fitZoom();
+      return;
+    }
+    if (mod && key === "1") {
+      event.preventDefault();
+      setZoom(1);
+      return;
+    }
+    if (mod && key === "2" && event.shiftKey) {
+      event.preventDefault();
+      zoomSelection();
+      return;
+    }
+    if (mod && key === "2") {
+      event.preventDefault();
+      setZoom(2);
+      return;
+    }
+    if (mod && event.altKey && event.key === "'") {
+      event.preventDefault();
+      patchStudioSettings({ protoGridStep: settings.protoGridStep === 5 ? 8 : 5 });
+      return;
+    }
+    if (mod && event.key === "'") {
+      event.preventDefault();
+      patchStudioSettings({ protoSnap: !snapGrid });
+      return;
+    }
+    if (event.key === "F2" && selected.length === 1) {
+      event.preventDefault();
+      setRenameElementId(selected[0]!);
+      setLeftTab("outline");
+      return;
+    }
+    if (event.key === "Delete" || event.key === "Backspace") {
+      event.preventDefault();
+      removeSelected();
+      return;
+    }
+    if (event.key.startsWith("Arrow") && selected.length) {
+      event.preventDefault();
+      const step = nudgeStep(event.shiftKey);
+      const { dx, dy } = arrowNudge(event.key, step);
+      if (mod && one) {
+        replace(pageElements(doc, pageDeviceView).map((el) => (el.id === one.id ? resizeByArrow(el, event.key, step) : el)));
+        return;
+      }
+      replace(
+        refreshConnectorsForElements(
+          pageElements(doc, pageDeviceView).map((el) => (selected.includes(el.id) ? { ...el, x: el.x + dx, y: el.y + dy } : el)),
+          new Set(selected),
+        ),
+      );
+      return;
+    }
+    if (event.key === "Escape") {
+      if (drag.current) {
+        event.preventDefault();
+        cancelActiveDrag();
+        return;
+      }
+      if (editScope.kind !== "page") {
+        event.preventDefault();
+        setEditScope({ kind: "page" });
+        return;
+      }
+      if (pendingTool) {
+        event.preventDefault();
+        setPendingTool(null);
+        return;
+      }
+    }
+    if (!mod && event.key === ".") {
+      event.preventDefault();
+      setPreviewOpen(true);
+      return;
+    }
+    if (event.key === "?" || (event.shiftKey && event.key === "/")) {
+      event.preventDefault();
+      setShortcutsOpen(true);
+      return;
+    }
+    if (quickInsertOpen && event.key === "Escape") {
+      event.preventDefault();
+      setQuickInsertOpen(false);
+      setQuickQuery("");
+      return;
+    }
+    if (!mod && key === "/") {
+      event.preventDefault();
+      setQuickInsertOpen(true);
+      return;
+    }
+    if (!mod && key === "v") {
+      setPendingTool(null);
+      setCommentToolActive(false);
+      return;
+    }
+    if (!mod && key === "c") {
+      event.preventDefault();
+      setCommentToolActive((on) => !on);
+      setPendingTool(null);
+      return;
+    }
+    if (!mod && key.length === 1 && CANVAS_TOOL_KEYS[key]) {
+      event.preventDefault();
+      setPendingTool(CANVAS_TOOL_KEYS[key]);
+      setQuickInsertOpen(false);
+    }
+  };
+
+  
+  const activePage = getActivePage(view);
+  const pageCommentNumbers = useMemo(() => commentNumbersOnPage(doc, activePage.id), [doc, activePage.id]);
+  const pageComments = useMemo(() => commentsForPage(doc, activePage.id), [doc, activePage.id]);
+  const commentPins = useMemo(
+    () =>
+      pageComments.map((comment) => ({
+        id: comment.id,
+        x: comment.x,
+        y: comment.y,
+        number: pageCommentNumbers.get(comment.id) ?? 0,
+        resolved: comment.resolved,
+      })),
+    [pageComments, pageCommentNumbers],
+  );
+  const openTabs = doc.pages.filter((p) => openTabIds.includes(p.id));
+  const pageEls = pageElements(view, pageDeviceView);
+  const boardItems = useMemo(() => {
+    if (editScope.kind === "component") {
+      const component = findComponent(view, editScope.componentId);
+      if (!component) return [];
+      return boardElementsForComponent(pageEls, editScope, component.elements);
+    }
+    return boardElements(pageEls, editScope);
+  }, [pageEls, editScope, view]);
+  const selectionBand = useMemo(() => {
+    const b = selectionBounds(pageEls, selected);
+    return b ? { left: b.left, top: b.top, right: b.right, bottom: b.bottom } : null;
+  }, [pageEls, selected]);
+
+  const scopeOverlay = useMemo(() => {
+    if (editScope.kind === "panel") {
+      const panel = pageEls.find((el) => el.id === editScope.panelId);
+      if (!panel) return null;
+      const origin = absolutePosition(panel, pageEls);
+      return (
+        <>
+          <div
+            data-proto-skip
+            className="pointer-events-none absolute border-2 border-primary/50 bg-primary/5"
+            style={{ left: origin.x, top: origin.y, width: panel.w, height: panel.h }}
+          />
+          <PanelScopeBar
+            panel={panel}
+            state={editScope.state}
+            onState={(state) => setEditScope({ kind: "panel", panelId: panel.id, state })}
+            onAdd={() => {
+              const nextPanel = addPanelState(panel);
+              replace(pageEls.map((el) => (el.id === panel.id ? nextPanel : el)));
+              setEditScope({ kind: "panel", panelId: panel.id, state: String(nextPanel.props.active) });
+            }}
+            onDuplicate={() => {
+              const result = duplicatePanelState(panel, editScope.state, pageEls);
+              replace(result.elements.map((el) => (el.id === panel.id ? result.panel : el)));
+              setEditScope({ kind: "panel", panelId: panel.id, state: result.panel.props.active as string });
+            }}
+            onRename={(name) => replace(renamePanelState(panel, pageEls, editScope.state, name))}
+            onDelete={() => {
+              const next = deletePanelState(panel, pageEls, editScope.state);
+              const nextPanel = next.find((el) => el.id === panel.id)!;
+              setEditScope({ kind: "panel", panelId: panel.id, state: String(nextPanel.props.active) });
+              replace(next);
+            }}
+            onViewAll={(on) => replace(pageEls.map((el) => (el.id === panel.id ? setPanelViewAllStates(el, on) : el)))}
+            onExit={() => setEditScope({ kind: "page" })}
+          />
+        </>
+      );
+    }
+    if (editScope.kind === "container") {
+      const box = pageEls.find((el) => el.id === editScope.containerId);
+      if (!box) return null;
+      const origin = absolutePosition(box, pageEls);
+      return (
+        <>
+          <div data-proto-skip className="pointer-events-none absolute border-2 border-primary/50" style={{ left: origin.x, top: origin.y, width: box.w, height: box.h }} />
+          <ContainerScopeBar label={box.label} onExit={() => setEditScope({ kind: "page" })} />
+        </>
+      );
+    }
+    if (editScope.kind === "group") {
+      return <ContainerScopeBar label={t("protoScopeGroup")} onExit={() => setEditScope({ kind: "page" })} />;
+    }
+    if (editScope.kind === "component") {
+      const component = findComponent(doc, editScope.componentId);
+      const label = component?.name ?? t("protoScopeComponent");
+      return <ContainerScopeBar label={label} onExit={() => setEditScope({ kind: "page" })} />;
+    }
+    return null;
+  }, [editScope, pageEls, replace, t, doc]);
+
+  const switchPage = (pageId: string) => {
+    commit(setActivePageId(doc, pageId));
+    setOpenTabIds((ids) => (ids.includes(pageId) ? ids : [...ids, pageId]));
+    setSelected([]);
+    setEdit(null);
+  };
+
+  const addPage = () => {
+    const page = newPage(nextPageName(doc.pages));
+    commit({ ...doc, pages: [...doc.pages, page], activePageId: page.id });
+    setOpenTabIds((ids) => [...ids, page.id]);
+    setSelected([]);
+  };
+
+  const duplicatePage = (pageId: string) => {
+    const source = doc.pages.find((p) => p.id === pageId);
+    if (!source) return;
+    const copy = { ...structuredClone(source), id: newPage().id, name: nextPageName(doc.pages) };
+    commit({ ...doc, pages: [...doc.pages, copy], activePageId: copy.id });
+    setOpenTabIds((ids) => [...ids, copy.id]);
+  };
+
+  const deletePage = (pageId: string) => {
+    if (doc.pages.length <= 1) return;
+    void recordRiskySnapshot();
+    const pages = doc.pages.filter((p) => p.id !== pageId);
+    const nextActive = pageId === doc.activePageId ? pages[0]!.id : doc.activePageId;
+    commit({ ...doc, pages, activePageId: nextActive });
+    setOpenTabIds((ids) => ids.filter((id) => id !== pageId));
+  };
+
+  const renamePage = (pageId: string, name: string) => {
+    commit({ ...doc, pages: doc.pages.map((p) => (p.id === pageId ? { ...p, name } : p)) });
+  };
+
+  const reorderPages = (from: number, to: number) => {
+    const pages = [...doc.pages];
+    const [item] = pages.splice(from, 1);
+    pages.splice(to, 0, item!);
+    commit({ ...doc, pages });
+  };
+
+  const reorderElements = (from: number, to: number) => {
+    const els = pageElements(doc, pageDeviceView);
+    const moved = els[from];
+    const target = els[to];
+    if (moved && target) {
+      const parent = readParent(moved);
+      const stack = parent ? els.find((el) => el.id === parent.id) : undefined;
+      if (stack && isAutoLayoutStack(stack)) {
+        const siblings = childrenOf(els, stack.id);
+        const toIndex = siblings.findIndex((el) => el.id === target.id);
+        if (toIndex >= 0) {
+          replace(reorderStackChild(els, stack.id, moved.id, toIndex));
+          return;
+        }
+      }
+    }
+    const next = [...els];
+    const [item] = next.splice(from, 1);
+    next.splice(to, 0, item!);
+    replace(next);
+  };
+
+  const toggleHidden = (id: string) => replace(pageElements(doc, pageDeviceView).map((el) => (el.id === id ? { ...el, hidden: !el.hidden } : el)));
+  const toggleLocked = (id: string) => replace(pageElements(doc, pageDeviceView).map((el) => (el.id === id ? { ...el, locked: !el.locked } : el)));
+  const renameElement = (id: string, label: string) => replace(pageElements(doc, pageDeviceView).map((el) => (el.id === id ? { ...el, label } : el)));
+
+  const updatePageNotes = (notes: string) => commit(updateActivePage(doc, (p) => ({ ...p, notes: notes || undefined })));
+
+  useEffect(() => {
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (!event.altKey || !(event.metaKey || event.ctrlKey)) return;
+      if (event.key === "[") { event.preventDefault(); setLeftOpen((o) => !o); }
+      if (event.key === "]") { event.preventDefault(); setRightOpen((o) => !o); }
+      if (event.key === "Enter" && leftTab === "pages") { event.preventDefault(); addPage(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [leftTab, doc]);
+
+  useEffect(() => {
+    const block = (event: globalThis.KeyboardEvent) => {
+      const tag = (event.target as HTMLElement).closest("input, textarea, [role=dialog]");
+      if (tag) return;
+      if (event.code === "Space") {
+        event.preventDefault();
+        spaceHeld.current = event.type === "keydown";
+        setModifiers((m) => ({ ...m, space: event.type === "keydown" }));
+      }
+    };
+    window.addEventListener("keydown", block);
+    window.addEventListener("keyup", block);
+    return () => {
+      window.removeEventListener("keydown", block);
+      window.removeEventListener("keyup", block);
+    };
+  }, []);
+
+  useEffect(() => {
+    const sync = (event: globalThis.KeyboardEvent) => {
+      const tag = (event.target as HTMLElement).closest("input, textarea, [role=dialog]");
+      if (tag) return;
+      setModifiers((m) => ({
+        ...m,
+        shift: event.shiftKey,
+        alt: event.altKey,
+        meta: event.metaKey || event.ctrlKey,
+      }));
+    };
+    window.addEventListener("keydown", sync);
+    window.addEventListener("keyup", sync);
+    return () => {
+      window.removeEventListener("keydown", sync);
+      window.removeEventListener("keyup", sync);
+    };
+  }, []);
+
+  const modifierHint = useMemo(() => {
+    const labels = activeModifierLabels(modifiers);
+    if (!labels.length) return null;
+    const text: Record<(typeof labels)[number], string> = {
+      shift: t("protoModifierShift"),
+      alt: t("protoModifierAlt"),
+      meta: t("protoModifierMeta"),
+      space: t("protoModifierSpace"),
+    };
+    return labels.map((label) => text[label]).join(" · ");
+  }, [modifiers, t]);
+
+const filtered = PALETTE_TILES.filter((tile) => tileMatchesQuery(tile, query, t(tile.labelKey, tile.labelParams ?? {})));
+  const docComponents = doc.components ?? [];
+  const filteredComponentList = useMemo(() => filterComponents(query, docComponents), [query, docComponents]);
+  const quickTiles = PALETTE_TILES.filter((tile) => tileMatchesQuery(tile, quickQuery, t(tile.labelKey, tile.labelParams ?? {}))).slice(0, 12);
+  const canGroup = selected.length > 1;
+  const canUngroup = selected.some((id) => pageElements(doc, pageDeviceView).find((el) => el.id === id)?.groupId);
+  const selectionLocked = selected.length > 0 && selected.every((id) => pageElements(doc, pageDeviceView).find((el) => el.id === id)?.locked);
+  const selectionHidden = selected.length > 0 && selected.every((id) => pageElements(doc, pageDeviceView).find((el) => el.id === id)?.hidden);
+
+  const commandItems = useMemo((): CommandPaletteItem[] => {
+    const items: CommandPaletteItem[] = [
+      { id: "action:preview", group: "action", label: t("protoPreviewTip"), shortcut: "." },
+      { id: "action:undo", group: "action", label: t("protoUndoTip"), shortcut: "Mod+Z" },
+      { id: "action:save", group: "action", label: t("save"), shortcut: "Mod+S" },
+      { id: "action:tour", group: "action", label: t("protoTourOpen") },
+    ];
+    for (const page of doc.pages) {
+      items.push({ id: `page:${page.id}`, group: "page", label: page.name });
+    }
+    for (const el of pageElements(view, pageDeviceView)) {
+      items.push({ id: `element:${el.id}`, group: "element", label: el.label, detail: el.type });
+    }
+    for (const component of doc.components ?? []) {
+      items.push({ id: `component:${component.id}`, group: "component", label: component.name });
+    }
+    return items;
+  }, [doc, pageDeviceView, t, view]);
+
+  const runCommand = (item: CommandPaletteItem) => {
+    if (item.id === "action:preview") setPreviewOpen(true);
+    else if (item.id === "action:undo") undo();
+    else if (item.id === "action:save") {
+      setSaveName(openedStem ?? doc.name);
+      setSaveOpen(true);
+    } else if (item.id === "action:tour") setTourOpen(true);
+    else if (item.id.startsWith("page:")) switchPage(item.id.slice(5));
+    else if (item.id.startsWith("element:")) setSelected([item.id.slice(8)]);
+    else if (item.id.startsWith("component:")) {
+      setEditScope({ kind: "component", componentId: item.id.slice(10) });
+      setSelected([]);
+    }
+  };
+
+  const menuBuildContext: MenuBuildContext = useMemo(
+    () => ({
+      selectedElementIds: selected,
+      targetElementId: selected[0],
+      canPaste: clipboard.current.length > 0,
+      canGroup,
+      canUngroup,
+      selectionLocked,
+      selectionHidden,
+      pageCount: doc.pages.length,
+      canDeletePage: doc.pages.length > 1,
+      componentsFeatureEnabled: true,
+      canCreateComponent: collectSelectionForComponent(pageElements(doc, pageDeviceView), selected).length > 0,
+      canEditComponent: one?.type === "Instance",
+      canDetachInstance: one?.type === "Instance",
+    }),
+    [selected, canGroup, canUngroup, selectionLocked, selectionHidden, doc.pages.length, one, doc],
+  );
+
+  return (
+    <div ref={rootRef} tabIndex={0} data-thread-id={threadId} className="h-full min-h-0 outline-none" onKeyDown={onKeyDown}>
+      <PrototypeShell
+        shellRef={shellRef}
+        compact={compact}
+        leftOpen={leftOpen}
+        rightOpen={rightOpen}
+        leftOverlay={leftOverlay}
+        rightOverlay={rightOverlay}
+        setLeftOverlay={setLeftOverlay}
+        setRightOverlay={setRightOverlay}
+        toolbar={
+          <PrototypeToolbar
+            barRef={barRef}
+            menu={menu}
+            toggleMenu={toggleMenu}
+            nameDraft={nameDraft}
+            setNameDraft={setNameDraft}
+            commitName={commitName}
+            index={index}
+            historyLength={history.length}
+            undo={undo}
+            redo={redo}
+            selectedCount={selected.length}
+            duplicateSelected={duplicateSelected}
+            removeSelected={removeSelected}
+            nudgeLayer={nudgeLayer}
+            narrow={compact}
+            applyAlign={applyAlign}
+            applyDistribute={applyDistribute}
+            zoom={zoom}
+            setZoom={setZoom}
+            fitZoom={fitZoom}
+            badges={badges}
+            setBadges={(fn) => patchStudioSettings({ protoBadges: fn(badges) })}
+            busy={busy}
+            sendToChat={sendToChat}
+            onNew={() => { const next = blankWireframe(); commit(next); setOpenedStem(null); setSelected([]); setEdit(null); setOpenTabIds([getActivePage(next).id]); }}
+            onOpen={() => { setOpenOpen(true); void loadList(); }}
+            onSave={() => { setSaveName(openedStem ?? doc.name); setSaveOpen(true); }}
+            toggleLeftPane={() => setLeftOpen((o) => !o)}
+            toggleRightPane={() => setRightOpen((o) => !o)}
+            autosaveStatus={autosaveStatus}
+            connectorToolActive={isConnectorTool(pendingTool)}
+            onToggleConnectorTool={() => setPendingTool((tool) => (isConnectorTool(tool) ? null : { type: "Connector" }))}
+            onPreview={() => setPreviewOpen(true)}
+            onHistory={() => { setMenu(null); setHistoryOpen(true); }}
+            onGenerate={() => setGenerateOpen(true)}
+            commentToolActive={commentToolActive}
+            onToggleCommentTool={() => {
+              setCommentToolActive((on) => !on);
+              setPendingTool(null);
+            }}
+            onExportSpec={() => void exportSpecification()}
+            onExportCode={() => void exportCode()}
+            onPublishExport={() => { setMenu(null); setPublishOpen(true); }}
+            onSendBuild={() => void sendBuildToChat()}
+            protoFidelity={settings.protoFidelity}
+            onFidelityChange={(value) => patchStudioSettings({ protoFidelity: value })}
+            onUndoSteps={() => setUndoStepsOpen(true)}
+          />
+        }
+        styleBar={<PrototypeStyleBar inspect={inspect} canvas={pageCanvas(doc, pageDeviceView)} onCanvas={(patch) => commit(patchCanvas(doc, patch))} onUpdate={updateOne} />}
+        leftPane={
+          <PrototypeLeftPane
+            topTab={leftTab}
+            setTopTab={setLeftTab}
+            pages={doc.pages}
+            activePageId={doc.activePageId}
+            onSelectPage={switchPage}
+            onAddPage={addPage}
+            onDuplicatePage={duplicatePage}
+            onDeletePage={deletePage}
+            onRenamePage={renamePage}
+            onReorderPages={reorderPages}
+            elements={pageElements(doc, pageDeviceView)}
+            selected={selected}
+            onSelectElements={(ids) => setSelected(ids)}
+            onOpenContextMenu={openContextMenu}
+            renameElementId={renameElementId}
+            renamePageId={renamePageId}
+            onRenameHandled={() => {
+              setRenameElementId(null);
+              setRenamePageId(null);
+            }}
+            onToggleHidden={toggleHidden}
+            onToggleLocked={toggleLocked}
+            onReorderElements={reorderElements}
+            onRenameElement={renameElement}
+            paletteView={paletteView}
+            setPaletteView={setPaletteView}
+            query={query}
+            setQuery={setQuery}
+            collapsed={collapsed}
+            setCollapsed={setCollapsed}
+            filteredTiles={filtered}
+            onAddTile={(tile) => addTile(tile)}
+            onAddTemplate={(templateId) => addTemplate(templateId)}
+            onAddIcon={(name) => addIconFromLibrary(name)}
+            components={docComponents}
+            filteredComponents={filteredComponentList}
+            onEditComponent={(componentId) => {
+              setEditScope({ kind: "component", componentId });
+              setSelected([]);
+            }}
+            onComponentContextMenu={(componentId, event) => openContextMenu(event.clientX, event.clientY, { kind: "componentTile", componentId })}
+            stylesPanel={
+              <PrototypeStylesPane
+                doc={doc}
+                selection={selectedEls}
+                onDocChange={(next) => commit(next, t("protoStyleEdit"))}
+                onApplyColorToken={(tokenId) => {
+                  if (!one) return;
+                  replaceElement(applyColorTokenLink(one, tokenId));
+                }}
+                onApplyTextStyle={(styleId) => {
+                  if (!one) return;
+                  replaceElement(applyTextStyleLink(one, styleId));
+                }}
+                onImportMarkdown={async () => {
+                  const remote = await rpc.call("readDesignMd", { threadId, locale });
+                  if (remote.markdown) return remote.markdown;
+                  return await new Promise<string | null>((resolve) => {
+                    const input = document.createElement("input");
+                    input.type = "file";
+                    input.accept = ".md,text/markdown";
+                    input.onchange = () => {
+                      const file = input.files?.[0];
+                      if (!file) {
+                        resolve(null);
+                        return;
+                      }
+                      void file.text().then(resolve);
+                    };
+                    input.click();
+                  });
+                }}
+              />
+            }
+          />
+        }
+        canvas={
+          <PrototypeCanvas
+            canvasPaneRef={canvasPaneRef}
+            boardRef={boardRef}
+            openTabs={openTabs}
+            activePageId={doc.activePageId}
+            onSelectPage={switchPage}
+            onCloseTab={(id) => setOpenTabIds((tabs) => tabs.filter((t) => t !== id))}
+            canvas={pageCanvas(view, pageDeviceView)}
+            elements={pageElements(view, pageDeviceView)}
+            components={doc.components ?? []}
+            zoom={zoom}
+            badges={badges}
+            notes={notes}
+            selected={selected}
+            one={one}
+            edit={edit}
+            editInputRef={editInputRef}
+            selectionBand={selectionBand}
+            showSnapGrid={settings.protoShowGrid}
+            gridSize={settings.protoGridStep}
+            marquee={marquee}
+            snapGuides={snapGuides}
+            distanceLines={distanceLines}
+            moveTooltip={moveTooltip}
+            panning={panning}
+            insertMode={pendingTool !== null}
+            drawPreview={drawPreview}
+            modifierHint={modifierHint}
+            connectorTool={isConnectorTool(pendingTool)}
+            connectorHoverId={connectorHoverId}
+            connectorDraft={connectorDraft}
+            boardItems={boardItems}
+            scopeOverlay={scopeOverlay}
+            deviceView={pageDeviceView}
+            onDeviceViewChange={setPageDeviceView}
+            fidelity={settings.protoFidelity}
+            styleLibrary={getStyleLibrary(doc)}
+            minimapVisible={settings.protoMinimap}
+            minimapViewport={minimapViewport}
+            onMinimapJump={(x, y) => {
+              const pane = canvasPaneRef.current;
+              if (!pane) return;
+              pane.scrollLeft = Math.max(0, x * zoom - pane.clientWidth / 2);
+              pane.scrollTop = Math.max(0, y * zoom - pane.clientHeight / 2);
+            }}
+            onOpenTour={() => setTourOpen(true)}
+            onOpenShortcuts={() => setShortcutsOpen(true)}
+            onPanePointerDown={onPanePointerDown}
+            onPanePointerMove={onPanePointerMove}
+            onPanePointerUp={onPanePointerUp}
+            onBoardPointerDown={onBoardPointerDown}
+            onBoardPointerMove={onBoardPointerMove}
+            onBoardPointerUp={onBoardPointerUp}
+            onBoardDoubleClick={onBoardDoubleClick}
+            onBoardContextMenu={onBoardContextMenu}
+            onPageTabContextMenu={(pageId, event) => {
+              event.preventDefault();
+              openContextMenu(event.clientX, event.clientY, { kind: "pageTab", pageId });
+            }}
+            onDrop={onDrop}
+            onEditChange={(draft) => setEdit((e) => (e ? { ...e, draft } : e))}
+            onInlineKeyDown={onInlineKeyDown}
+            onCommitEdit={commitEdit}
+            skipBlur={skipBlur}
+            onPaneClick={() => setMenu(null)}
+            resolveAsset={resolveAsset}
+            commentPins={commentPins}
+            onCommentPinClick={(id) => {
+              setSelected([]);
+              setInspectorTab("notes");
+              void id;
+            }}
+          />
+        }
+        inspector={
+          <PrototypeInspector
+            tab={inspectorTab}
+            setTab={setInspectorTab}
+            inspect={inspect}
+            selection={selectedEls}
+            elements={pageElements(doc, pageDeviceView)}
+            canvas={pageCanvas(doc, pageDeviceView)}
+            pageNotes={activePage.notes ?? ""}
+            noteMarkers={badges}
+            onNoteMarkers={(on) => patchStudioSettings({ protoBadges: on })}
+            onPageNotes={updatePageNotes}
+            onCanvas={(patch) => commit(patchCanvas(doc, patch))}
+            updateOne={updateOne}
+            updateMany={updateMany}
+            setProp={setProp}
+            onReplaceElement={replaceElement}
+            onRadioGroup={(groupId) => {
+              if (!one) return;
+              if (groupId === "__create__") {
+                replace(createRadioGroup(pageElements(doc, pageDeviceView), [one.id]));
+                return;
+              }
+              replace(assignRadioGroup(pageElements(doc, pageDeviceView), one.id, groupId));
+            }}
+            onRadioChecked={(checked) => {
+              if (!one) return;
+              replace(setRadioChecked(pageElements(doc, pageDeviceView), one.id, checked));
+            }}
+            applyAlign={applyAlign}
+            applyDistribute={applyDistribute}
+            components={doc.components ?? []}
+            onInstanceOverride={(masterElementId, propKey, value) => {
+              if (!one || one.type !== "Instance") return;
+              replaceElement(setOverride(one, masterElementId, propKey, value));
+            }}
+            onInstanceResetOverrides={() => {
+              if (!one || one.type !== "Instance") return;
+              replaceElement(resetOverrides(one));
+            }}
+            onInstanceClearOverride={(masterElementId, propKey) => {
+              if (!one || one.type !== "Instance") return;
+              replaceElement(clearOverride(one, masterElementId, propKey));
+            }}
+            pages={doc.pages}
+            onInteractionsChange={(interactions) => {
+              if (!one) return;
+              replaceElement({ ...one, interactions });
+            }}
+            pageComments={pageComments}
+            commentNumbers={pageCommentNumbers}
+            onCommentText={(id, text) => commit(updateComment(doc, id, { text }))}
+            onCommentResolve={(id, resolved) => commit(updateComment(doc, id, { resolved }))}
+            onCommentDelete={(id) => commit(deleteComment(doc, id))}
+            styleLibrary={getStyleLibrary(doc)}
+            onUnlinkStyles={() => {
+              if (!one) return;
+              replaceElement(unlinkElementStyles(one));
+            }}
+          />
+        }
+        dialogs={
+          <>
+            <Dialog open={deleteComponentId !== null} onOpenChange={(open) => { if (!open) setDeleteComponentId(null); }}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>{t("protoCtxDeleteComponent")}</DialogTitle>
+                </DialogHeader>
+                <p className="text-sm text-muted-foreground">
+                  {t("protoComponentInstancesWarning", { count: deleteComponentId ? countInstances(doc, deleteComponentId) : 0 })}
+                </p>
+                <DialogFooter className="flex-wrap gap-2">
+                  <Button variant="outline" onClick={() => setDeleteComponentId(null)}>{t("cancel")}</Button>
+                  <Button
+                    variant="destructive"
+                    onClick={() => {
+                      if (!deleteComponentId) return;
+                      void recordRiskySnapshot();
+                      commit(purgeComponent(doc, deleteComponentId));
+                      if (editScope.kind === "component" && editScope.componentId === deleteComponentId) setEditScope({ kind: "page" });
+                      setDeleteComponentId(null);
+                    }}
+                  >
+                    {t("protoCtxDelete")}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+            <Dialog open={saveOpen} onOpenChange={setSaveOpen}>
+              <DialogContent>
+                <DialogHeader><DialogTitle>{t("save")}</DialogTitle></DialogHeader>
+                <label className="grid gap-1 text-sm">
+                  <span className="text-xs text-muted-foreground">{t("fileName")}</span>
+                  <Input value={saveName} onChange={(event) => setSaveName(event.target.value.replace(/[/\\]/g, ""))} />
+                </label>
+                <DialogFooter className="flex-wrap gap-2">
+                  <Button variant="outline" disabled={busy} onClick={() => setSaveOpen(false)}>{t("cancel")}</Button>
+                  {openedStem ? <Button variant="outline" disabled={busy} onClick={() => void save(true)}>{t("protoOverwrite")}</Button> : null}
+                  <Button disabled={busy || !saveName.trim()} onClick={() => void save(false)}>{t("save")}</Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+            <Dialog open={openOpen} onOpenChange={setOpenOpen}>
+              <DialogContent>
+                <DialogHeader><DialogTitle>{t("protoOpen")}</DialogTitle></DialogHeader>
+                {savedNames.length === 0 ? <div className="text-sm text-muted-foreground">{t("protoNoSaved")}</div> : (
+                  <div className="flex max-h-64 flex-col gap-1 overflow-auto">
+                    {savedNames.map((name) => (
+                      <button key={name} type="button" className="rounded-md border border-border px-2 py-1.5 text-left text-sm hover:bg-state-hover" onClick={() => void loadOne(name)}>{name}</button>
+                    ))}
+                  </div>
+                )}
+              </DialogContent>
+            </Dialog>
+            <CommentComposeDialog
+              open={commentComposeOpen}
+              onOpenChange={setCommentComposeOpen}
+              onSubmit={(text) => {
+                if (!commentDraft) return;
+                commit(
+                  addComment(doc, {
+                    pageId: doc.activePageId,
+                    x: commentDraft.x,
+                    y: commentDraft.y,
+                    elementId: commentDraft.elementId,
+                    text,
+                  }),
+                );
+                setCommentDraft(null);
+                setInspectorTab("notes");
+              }}
+            />
+            <AgentGenerateDialog
+              threadId={threadId}
+              open={generateOpen}
+              onOpenChange={setGenerateOpen}
+              onOpened={(name, json) => {
+                const next = parseWireframe(json);
+                void markWrittenJson(json);
+                lastAppliedRemoteHashRef.current = null;
+                commit(next);
+                setOpenedStem(name);
+                setSelected([]);
+                setEdit(null);
+                setOpenTabIds([getActivePage(next).id]);
+              }}
+            />
+            <WireframeHistoryDialog
+              open={historyOpen}
+              onOpenChange={setHistoryOpen}
+              stem={openedStem}
+              loadSnapshots={loadHistorySnapshots}
+              loadSnapshotJson={loadHistorySnapshotJson}
+              onRestore={restoreHistorySnapshot}
+            />
+          </>
+        }
+      />
+      {previewOpen ? (
+        <PrototypePreviewPlayer
+          doc={view}
+          deviceView={pageDeviceView}
+          boardRef={previewBoardRef}
+          onClose={() => setPreviewOpen(false)}
+          onSendScreenshot={sendPreviewToChat}
+        />
+      ) : null}
+      <ProtoShortcutsSheet open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
+      <PrototypeContextMenu
+        open={contextMenu !== null}
+        x={contextMenu?.x ?? 0}
+        y={contextMenu?.y ?? 0}
+        target={contextMenu?.target ?? null}
+        context={menuBuildContext}
+        onAction={onContextAction}
+        onClose={() => setContextMenu(null)}
+      />
+      <PrototypeCommandPalette open={commandPaletteOpen} onOpenChange={setCommandPaletteOpen} items={commandItems} onRun={runCommand} />
+      <UndoStepsPanel
+        open={undoStepsOpen}
+        onOpenChange={setUndoStepsOpen}
+        labels={labels}
+        activeIndex={index}
+        onJump={(target) => setTimeline((s) => ({ ...s, index: target }))}
+      />
+      <PrototypeTour
+        open={tourOpen}
+        onOpenChange={setTourOpen}
+        onDone={() => patchStudioSettings({ protoTourDone: true })}
+      />
+      <PrototypePublishDialog
+        open={publishOpen}
+        onOpenChange={setPublishOpen}
+        previewUrl={previewUrl}
+        published={publishPublished}
+        busy={busy}
+        onPublish={publishPreview}
+        onUnpublish={unpublishPreview}
+        onCopyLink={() => {
+          if (!previewUrl) return;
+          void navigator.clipboard.writeText(previewUrl);
+          toast.success(t("protoPublishCopy"));
+        }}
+        onOpenLink={() => {
+          if (!previewUrl) return;
+          window.open(previewUrl, "_blank", "noopener,noreferrer");
+        }}
+        onExportPdf={exportPdfDownload}
+        onExportSvg={exportSvgDownload}
+        onExportPng={exportPngSet}
+        onImportFile={importPublishFile}
+      />
+      {quickInsertOpen ? (
+        <div className="fixed inset-0 z-40 flex items-start justify-center bg-black/20 pt-24" onClick={() => { setQuickInsertOpen(false); setQuickQuery(""); }}>
+          <div className="w-full max-w-md rounded-lg border border-border bg-popover p-3 shadow-lg" onClick={(event) => event.stopPropagation()}>
+            <div className="mb-2 text-sm font-medium">{t("protoQuickInsert")}</div>
+            <Input autoFocus value={quickQuery} onChange={(event) => setQuickQuery(event.target.value)} placeholder={t("protoSearch")} />
+            <div className="mt-2 max-h-64 overflow-auto">
+              {quickTiles.map((tile) => (
+                <button
+                  key={tile.id}
+                  type="button"
+                  className="flex w-full rounded px-2 py-1.5 text-left text-sm hover:bg-state-hover"
+                  onClick={() => {
+                    addTile(tile);
+                    setQuickInsertOpen(false);
+                    setQuickQuery("");
+                  }}
+                >
+                  {t(tile.labelKey, tile.labelParams ?? {})}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
