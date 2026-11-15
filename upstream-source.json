@@ -1,0 +1,25 @@
+{
+  "id": "office-viewer",
+  "repo": "https://github.com/VKirill/bb-plugin-office-viewer.git",
+  "subdir": "",
+  "catalogueSource": {
+    "url": "https://github.com/VKirill/bb-plugin-office-viewer.git",
+    "range": "^0.8.1"
+  },
+  "errors": [],
+  "head": "dcaaae50f84e8c701db521501d357b2fec59ffbf",
+  "files": [
+    [
+      "package.json",
+      2837
+    ],
+    [
+      "README.md",
+      1803
+    ],
+    [
+      "LICENSE",
+      1073
+    ]
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "name": "@zcc-ext/office-viewer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "Read and quote Word, Excel and PowerPoint content beside a thread.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/grebmann1/zcc-plugin-office-viewer.git"
+  },
+  "engines": {
+    "node": ">=22.13",
+    "zcc": ">=2.6.1",
+    "zccPluginSdk": ">=0.1.0"
+  },
+  "zcc": {
+    "name": "Office Viewer",
+    "description": "Read and quote Word, Excel and PowerPoint content beside a thread.",
+    "branding": {
+      "icon": "FileText"
+    },
+    "server": "./server.mjs",
+    "app": "./app.js"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "vitest run",
+    "coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm run coverage && npm run build"
+  },
+  "devDependencies": {
+    "@testing-library/react": "16.3.2",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitest/coverage-v8": "4.1.10",
+    "esbuild": "0.28.1",
+    "jsdom": "26.1.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "typescript": "^5.9.3",
+    "vitest": "4.1.10"
+  },
+  "dependencies": {
+    "fflate": "^0.8.3",
+    "saxes": "^6.0.0"
+  }
+}
